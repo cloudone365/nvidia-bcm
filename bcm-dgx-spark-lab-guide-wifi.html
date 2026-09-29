@@ -183,7 +183,7 @@ details.mobile-toc{display:none}
   <!-- BCM partition -->
   <rect x="30" y="82" width="470" height="408" rx="10" class="b-bcm"/>
   <text x="48" y="108" font-size="16" font-weight="800">BCM partition — machine.slice</text>
-  <text x="48" y="128" font-size="13" class="t-muted mono">AllowedCPUs=4-9 · MemoryMax=34G</text>
+  <text x="48" y="128" font-size="13" class="t-muted mono">AllowedCPUs=4,10-14 · MemoryMax=34G</text>
 
   <!-- NAT net -->
   <line x1="60" y1="160" x2="480" y2="160" class="net-ext"/>
@@ -220,7 +220,7 @@ details.mobile-toc{display:none}
   <!-- workload partition -->
   <rect x="520" y="82" width="350" height="408" rx="10" class="b-llm"/>
   <text x="538" y="108" font-size="16" font-weight="800">Workload partition</text>
-  <text x="538" y="128" font-size="13" class="t-muted mono">cpuset 10-19 · ~80 GB left</text>
+  <text x="538" y="128" font-size="13" class="t-muted mono">cpuset 5-9,15-19 · ~80 GB left</text>
   <rect x="540" y="148" width="310" height="70" rx="8" class="gpu"/>
   <text x="558" y="178" font-size="15" font-weight="700">GB10 Blackwell GPU</text>
   <text x="558" y="199" font-size="12.5" class="t-muted">host only · not passed to VMs</text>
@@ -264,8 +264,8 @@ details.mobile-toc{display:none}
 <tr class="host"><td>Host reserve</td><td>cores 0-3 · ~8 GB</td><td>cores 0-3 · ~8 GB</td></tr>
 <tr class="bcm"><td>bcm-head</td><td>4 vCPU · 16 GB · 100 GB disk</td><td>4 vCPU · 20 GB · 120 GB disk</td></tr>
 <tr class="bcm"><td>Compute nodes</td><td>2 × (1 vCPU · 3 GB · 40 GB)</td><td>2 × (2 vCPU · 4 GB · 60 GB)</td></tr>
-<tr class="bcm"><td>BCM slice cap</td><td>cores 4-7 · MemoryMax=24G</td><td>cores 4-9 · MemoryMax=34G</td></tr>
-<tr class="llm"><td>Left for LLMs</td><td>cores 8-19 · ~96 GB</td><td>cores 10-19 · ~86 GB</td></tr>
+<tr class="bcm"><td>BCM slice cap</td><td>cores 4,10-12 · MemoryMax=24G</td><td>cores 4,10-14 · MemoryMax=34G</td></tr>
+<tr class="llm"><td>Left for LLMs</td><td>cores 5-9,13-19 · ~96 GB</td><td>cores 5-9,15-19 · ~86 GB</td></tr>
 </tbody></table></div>
 <p>vCPUs are deliberately oversubscribed inside the BCM slice (8 vCPUs on 6 cores). A management cluster idles most of the time; it will not notice.</p>
 <div class="note">
@@ -286,14 +286,29 @@ free -g           <span class="c"># expect ~119 GB usable of 128 GB</span>
 df -h /var/lib    <span class="c"># VM disks land here; need ~250 GB free</span></code></pre>
 
 <h3>Map the two kinds of core</h3>
-<p>The GB10 CPU has ten performance cores (Cortex-X925) and ten efficiency cores (Cortex-A725). Put BCM on efficiency cores and give performance cores to the workload side. The numbering is not guaranteed, so check it:</p>
+<p>The GB10 CPU has ten performance cores (Cortex-X925) and ten efficiency cores (Cortex-A725), arranged in two clusters of five of each. Put the host and BCM on efficiency cores and give every performance core to the workload side. Confirm the numbering on your unit:</p>
 <pre><code>lscpu -e=CPU,CORE,MAXMHZ
 <span class="c"># Cores with the higher MAXMHZ are the X925 performance cores.</span>
 <span class="c"># Cross-check by part number: 0xd85 = X925, 0xd87 = A725</span>
 grep -E 'processor|CPU part' /proc/cpuinfo | paste - -</code></pre>
+<p>On this Spark the output is:</p>
+<div class="tbl"><table>
+<thead><tr><th>Core type</th><th>CPU part</th><th>CPUs</th></tr></thead>
+<tbody>
+<tr class="bcm"><td>Efficiency (Cortex-A725)</td><td><code>0xd87</code></td><td>0-4, 10-14</td></tr>
+<tr class="llm"><td>Performance (Cortex-X925)</td><td><code>0xd85</code></td><td>5-9, 15-19</td></tr>
+</tbody></table></div>
+<p>So the split used throughout this guide is:</p>
+<div class="tbl"><table>
+<thead><tr><th>Slice</th><th>CPUs</th><th>Core type</th></tr></thead>
+<tbody>
+<tr class="host"><td>Host reserve</td><td><code>0-3</code></td><td>4 efficiency</td></tr>
+<tr class="bcm"><td>BCM (machine.slice)</td><td><code>4,10-14</code></td><td>6 efficiency</td></tr>
+<tr class="llm"><td>Workloads (containers)</td><td><code>5-9,15-19</code></td><td>10 performance</td></tr>
+</tbody></table></div>
 <div class="note">
-<strong>Substitute your own ranges.</strong>
-<p>This guide assumes CPUs 0-9 are efficiency cores and 10-19 are performance cores. If your output differs, keep the same logic — host on four efficiency cores, BCM on the remaining efficiency cores, workloads on all performance cores — and replace <code>0-3</code>, <code>4-9</code> and <code>10-19</code> everywhere below.</p>
+<strong>Different unit, different numbers.</strong>
+<p>If your output doesn't match the table above, keep the same logic — host on four efficiency cores, BCM on the remaining six, workloads on all ten performance cores — and replace <code>0-3</code>, <code>4,10-14</code> and <code>5-9,15-19</code> everywhere below.</p>
 </div>
 
 <h3>Check the Wi-Fi uplink</h3>
@@ -345,10 +360,12 @@ virt-host-validate qemu
 ls /usr/share/AAVMF/          <span class="c"># Arm UEFI firmware the VMs will boot from</span></code></pre>
 
 <h3>Bring up the default NAT network</h3>
-<p>On a fresh Spark the default libvirt network is often defined but inactive.</p>
+<p>Installing libvirt creates a NAT network called <code>default</code>; the head node's external NIC will use it. On a fresh Spark it is often defined but inactive.</p>
 <pre><code>sudo virsh net-list --all
 sudo virsh net-start default
 sudo virsh net-autostart default</code></pre>
+<p>If <code>default</code> is missing from the list entirely, recreate it from the copy libvirt ships, then run the two commands above:</p>
+<pre><code>sudo virsh net-define /usr/share/libvirt/networks/default.xml</code></pre>
 </section>
 
 <section id="s3">
@@ -358,14 +375,14 @@ sudo virsh net-autostart default</code></pre>
 
 <h3>Cap the BCM slice</h3>
 <pre><code><span class="c"># Persistent: systemd writes a drop-in under /etc/systemd/system.control/</span>
-sudo systemctl set-property machine.slice AllowedCPUs=4-9 MemoryMax=34G
+sudo systemctl set-property machine.slice AllowedCPUs=4,10-14 MemoryMax=34G
 
 <span class="c"># Keep everything else off the BCM cores</span>
-sudo systemctl set-property system.slice AllowedCPUs=0-3,10-19
-sudo systemctl set-property user.slice   AllowedCPUs=0-3,10-19
+sudo systemctl set-property system.slice AllowedCPUs=0-3,5-9,15-19
+sudo systemctl set-property user.slice   AllowedCPUs=0-3,5-9,15-19
 
 systemctl show machine.slice -p AllowedCPUs -p MemoryMax</code></pre>
-<p>Docker containers run under <code>system.slice</code>, so they automatically stay on cores 0-3 and 10-19. Step 11 narrows them further to 10-19.</p>
+<p>Docker containers run under <code>system.slice</code>, so they automatically stay on cores 0-3, 5-9 and 15-19. Step 11 narrows them further to the performance cores, 5-9 and 15-19.</p>
 
 <h3>Protect the VMs from the out-of-memory killer</h3>
 <p>If a model loads more than expected, the kernel will pick a victim. Make sure it is never the head node. A libvirt hook lowers each QEMU process's OOM score as it starts.</p>
@@ -393,7 +410,29 @@ sudo systemctl restart libvirtd   <span class="c"># libvirt only discovers new h
 <p class="touches">Touches: libvirt networks and, optionally, port forwards on the host. Nothing on your home LAN or router changes.</p>
 
 <h3>External side: reuse the NAT network</h3>
-<p>The head node's external NIC goes on libvirt's <code>default</code> network (192.168.122.0/24, gateway 192.168.122.1). Its outbound traffic is NATed out through <code>wlP9s9</code> to your router, which gives it internet access for licensing and repositories. No host network changes are needed.</p>
+<p>The head node's external NIC goes on libvirt's <code>default</code> network (192.168.122.0/24, gateway 192.168.122.1). Unlike the internal network, it needs no XML of its own: libvirt created it at install time and step 2 started it. Its outbound traffic is NATed out through <code>wlP9s9</code> to your router, which gives it internet access for licensing and repositories.</p>
+<p>Check that it matches what the head node will expect:</p>
+<pre><code>sudo virsh net-dumpxml default</code></pre>
+<pre><code><span class="c">&lt;!-- expected, roughly --&gt;</span>
+&lt;network&gt;
+  &lt;name&gt;default&lt;/name&gt;
+  &lt;forward mode='nat'/&gt;
+  &lt;bridge name='virbr0' stp='on' delay='0'/&gt;
+  &lt;ip address='192.168.122.1' netmask='255.255.255.0'&gt;
+    &lt;dhcp&gt;
+      &lt;range start='192.168.122.2' end='192.168.122.254'/&gt;
+    &lt;/dhcp&gt;
+  &lt;/ip&gt;
+&lt;/network&gt;</code></pre>
+
+<h4 style="margin:18px 0 6px">Reserve the head node's address</h4>
+<p>The head node uses a static 192.168.122.10, which sits inside libvirt's DHCP range. Reserve it for the head node's MAC so no other VM is ever handed the same address:</p>
+<pre><code>sudo virsh net-update default add ip-dhcp-host \
+  "&lt;host mac='52:54:00:bc:00:01' name='bcm-head' ip='192.168.122.10'/&gt;" \
+  --live --config
+
+sudo virsh net-dumpxml default | grep bcm-head   <span class="c"># reservation is present</span></code></pre>
+<p>If you'd rather keep the lab fully separate from any other VMs you run later, you can define a dedicated NAT network (for example <code>bcm-external</code> on 192.168.123.0/24) instead of using <code>default</code>; for a single-purpose lab, <code>default</code> is simpler.</p>
 <p>Traffic path: <code>bcm-head 192.168.122.10 → virbr0 192.168.122.1 → NAT → wlP9s9 192.168.0.50 → router 192.168.0.1 → internet</code>.</p>
 
 <h3>Internal side: an isolated provisioning network</h3>
@@ -497,7 +536,7 @@ sha256sum /var/lib/libvirt/images/iso/bcm11-arm64.iso   <span class="c"># compar
   --arch aarch64 --machine virt \
   --boot uefi \
   --cpu host-passthrough \
-  --vcpus 4,cpuset=4-9 \
+  --vcpus 4,cpuset=4,10-14 \
   --memory 20480 \
   --memorybacking locked=on \
   --controller type=scsi,model=virtio-scsi \
@@ -520,7 +559,7 @@ virt-manager -c qemu+ssh://&lt;spark-user&gt;@192.168.0.50/system</code></pre>
 
 <h3>Confirm it is fenced</h3>
 <pre><code>systemd-cgls -u machine.slice | head
-virsh vcpupin bcm-head         <span class="c"># every vCPU should show 4-9</span>
+virsh vcpupin bcm-head         <span class="c"># every vCPU should show 4,10-14</span>
 systemd-cgtop -1 machine.slice</code></pre>
 </section>
 
@@ -618,7 +657,7 @@ quit</code></pre>
     --arch aarch64 --machine virt \
     --boot uefi \
     --cpu host-passthrough \
-    --vcpus 2,cpuset=4-9 \
+    --vcpus 2,cpuset=4,10-14 \
     --memory 4096 \
     --memorybacking locked=on \
     --controller type=scsi,model=virtio-scsi \
@@ -703,12 +742,12 @@ cmsh -c "device power reset -n node002"</code></pre>
 
 <h3>Pin to the performance cores</h3>
 <pre><code><span class="c"># Ollama</span>
-docker run -d --name ollama --gpus all --cpuset-cpus 10-19 \
+docker run -d --name ollama --gpus all --cpuset-cpus 5-9,15-19 \
   -v ollama:/root/.ollama -p 11434:11434 --restart unless-stopped \
   ollama/ollama
 
 <span class="c"># vLLM (use the arm64 image NVIDIA publishes for DGX Spark)</span>
-docker run -d --name vllm --gpus all --cpuset-cpus 10-19 --ipc=host \
+docker run -d --name vllm --gpus all --cpuset-cpus 5-9,15-19 --ipc=host \
   -p 8000:8000 -v ~/.cache/huggingface:/root/.cache/huggingface \
   &lt;vllm-image-for-spark&gt; \
   vllm serve &lt;model&gt; --gpu-memory-utilization 0.60 --max-model-len 32768</code></pre>
@@ -797,6 +836,11 @@ ls /var/lib/libvirt/qemu/nvram/ | grep bcm <span class="c"># no UEFI variable st
 <pre><code>sudo virsh net-destroy bcm-internal
 sudo virsh net-undefine bcm-internal
 
+<span class="c"># Remove the head node's address reservation from the NAT network</span>
+sudo virsh net-update default delete ip-dhcp-host \
+  "&lt;host mac='52:54:00:bc:00:01' name='bcm-head' ip='192.168.122.10'/&gt;" \
+  --live --config
+
 <span class="c"># Only if nothing else on the Spark uses libvirt's NAT network:</span>
 sudo virsh net-destroy default
 sudo virsh net-autostart default --disable
@@ -828,7 +872,7 @@ sudo systemctl daemon-reload
 
 systemctl show machine.slice system.slice user.slice -p AllowedCPUs -p MemoryMax
 <span class="c"># Expect AllowedCPUs empty and MemoryMax=infinity</span></code></pre>
-<p>If you had narrowed Docker containers to <code>--cpuset-cpus 10-19</code>, recreate them without that flag to let them use all 20 cores.</p>
+<p>If you had narrowed Docker containers to <code>--cpuset-cpus 5-9,15-19</code>, recreate them without that flag to let them use all 20 cores.</p>
 
 <h3>5. Remove the libvirt hook and power account</h3>
 <pre><code>sudo rm -f /etc/libvirt/hooks/qemu
