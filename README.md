@@ -22,7 +22,12 @@ Every step ends with a **Diagnose this step** panel built from a real install. T
 
 ## Reading the guides
 
-GitHub shows `.html` files as source. Download a file and open it in a browser, or enable GitHub Pages for this repository.
+Read them as web pages on GitHub Pages:
+
+- **Wi-Fi guide:** https://cloudone365.github.io/nvidia-bcm/bcm-dgx-spark-lab-guide-wifi.html
+- **Wired guide:** https://cloudone365.github.io/nvidia-bcm/bcm-dgx-spark-lab-guide-wired.html
+
+Opening the `.html` files in the repository file list shows their source code, because GitHub doesn't render HTML there. You can also download a file and open it in any browser.
 
 ## Scope
 
