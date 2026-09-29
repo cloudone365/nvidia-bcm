@@ -6,10 +6,12 @@ The BCM head node and PXE-provisioned compute nodes run in an isolated CPU and m
 
 ## Guides
 
-| File | Use it when |
+| Guide | Use it when |
 | --- | --- |
-| [`bcm-dgx-spark-lab-guide-wifi.html`](bcm-dgx-spark-lab-guide-wifi.html) | The Spark connects to your home LAN over Wi-Fi (`wlP9s9`, 192.168.0.0/24). The head node sits behind libvirt NAT and is reached from the LAN with an SSH jump or port forwards. |
-| [`bcm-dgx-spark-lab-guide-wired.html`](bcm-dgx-spark-lab-guide-wired.html) | The Spark connects over its wired 10 GbE port. Adds an optional bridge so the head node can get its own LAN address. |
+| [Wi-Fi guide](bcm-dgx-spark-lab-guide-wifi.md) | The Spark connects to your home LAN over Wi-Fi (`wlP9s9`, 192.168.0.0/24). The head node sits behind libvirt NAT and is reached from the LAN with an SSH jump or port forwards. |
+| [Wired guide](bcm-dgx-spark-lab-guide-wired.md) | The Spark connects over its wired 10 GbE port. Adds an optional bridge so the head node can get its own LAN address. |
+
+![Lab architecture](assets/architecture-wifi.svg)
 
 Both guides cover the architecture and resource budget, KVM/libvirt setup, the isolation boundary, BCM head node installation and licensing, compute node provisioning, optional BCM power control through `virsh`, running LLMs alongside the lab, day-2 operations, full teardown and troubleshooting.
 
@@ -22,12 +24,12 @@ Every step ends with a **Diagnose this step** panel built from a real install. T
 
 ## Reading the guides
 
-Read them as web pages on GitHub Pages:
+The `.md` guides render directly on GitHub, with the architecture diagram, colour-coded partitions (⬛ host, 🟩 BCM, 🟧 workloads), coloured callouts and a collapsible **🩺 Diagnose this step** panel under every step.
 
-- **Wi-Fi guide:** https://cloudone365.github.io/nvidia-bcm/bcm-dgx-spark-lab-guide-wifi.html
-- **Wired guide:** https://cloudone365.github.io/nvidia-bcm/bcm-dgx-spark-lab-guide-wired.html
+The same guides also exist as styled HTML pages (`.html`), with copy buttons on every command. GitHub shows those files as source code; to read them as web pages, enable GitHub Pages for this repository (Settings → Pages → Deploy from branch `main`, folder `/`). They will then be at:
 
-Opening the `.html` files in the repository file list shows their source code, because GitHub doesn't render HTML there. You can also download a file and open it in any browser.
+- https://cloudone365.github.io/nvidia-bcm/bcm-dgx-spark-lab-guide-wifi.html
+- https://cloudone365.github.io/nvidia-bcm/bcm-dgx-spark-lab-guide-wired.html
 
 ## Scope
 

@@ -197,18 +197,18 @@ details.mobile-toc{display:none}
   <text x="62" y="152" font-size="12.5" class="mono t-muted">virbr0 · "default" NAT · 192.168.122.0/24</text>
 
   <!-- head VM -->
-  <rect x="60" y="190" width="200" height="118" rx="8" class="vm"/>
+  <rect x="60" y="190" width="230" height="118" rx="8" class="vm"/>
   <text x="76" y="215" font-size="15" font-weight="700">bcm-head</text>
   <text x="76" y="236" font-size="12.5" class="t-muted">4 vCPU · 20 GB · 120 GB</text>
   <text x="76" y="256" font-size="12.5" class="mono">ext 192.168.122.10</text>
   <text x="76" y="274" font-size="12.5" class="mono">int 10.141.255.254</text>
   <text x="76" y="294" font-size="12" class="t-muted">DHCP · TFTP · CMDaemon · Slurm</text>
   <line x1="120" y1="160" x2="120" y2="190" class="net-ext"/>
-  <line x1="200" y1="308" x2="200" y2="380" class="net-int"/>
+  <line x1="100" y1="308" x2="100" y2="380" class="net-int"/>
 
   <!-- internal net -->
   <line x1="60" y1="380" x2="480" y2="380" class="net-int"/>
-  <text x="62" y="372" font-size="12.5" class="mono" fill="currentColor"><tspan class="t-muted">bcm-internal · isolated · 10.141.0.0/16</tspan></text>
+  <text x="480" y="372" font-size="12.5" class="mono" text-anchor="end"><tspan class="t-muted">bcm-internal · isolated · 10.141.0.0/16</tspan></text>
 
   <!-- nodes -->
   <rect x="60" y="410" width="190" height="62" rx="8" class="vm"/>
@@ -220,9 +220,9 @@ details.mobile-toc{display:none}
   <text x="296" y="456" font-size="12.5" class="t-muted">2 vCPU · 4 GB · PXE boot</text>
   <line x1="375" y1="380" x2="375" y2="410" class="net-int"/>
 
-  <text x="290" y="215" font-size="12.5" class="t-muted">No host IP on bcm-internal.</text>
-  <text x="290" y="233" font-size="12.5" class="t-muted">BCM's DHCP cannot leak</text>
-  <text x="290" y="251" font-size="12.5" class="t-muted">onto your LAN.</text>
+  <text x="308" y="215" font-size="12.5" class="t-muted">No host IP on bcm-internal.</text>
+  <text x="308" y="233" font-size="12.5" class="t-muted">BCM's DHCP cannot leak</text>
+  <text x="308" y="251" font-size="12.5" class="t-muted">onto your LAN.</text>
 
   <!-- workload partition -->
   <rect x="520" y="82" width="350" height="408" rx="10" class="b-llm"/>
@@ -250,7 +250,7 @@ details.mobile-toc{display:none}
   <!-- host reserved -->
   <rect x="30" y="508" width="840" height="64" rx="10" fill="none" stroke="var(--host)" stroke-width="1.5" stroke-dasharray="4 4"/>
   <text x="48" y="535" font-size="15" font-weight="700">Host reserve — cores 0-3, ~8 GB</text>
-  <text x="48" y="556" font-size="12.5" class="t-muted">DGX OS services, libvirtd, dockerd, desktop · physical 10 GbE → your LAN (optional br0 bridge for direct head-node access)</text>
+  <text x="48" y="556" font-size="11.5" class="t-muted">DGX OS services, libvirtd, dockerd, desktop · physical 10 GbE → your LAN (optional br0 bridge for direct head-node access)</text>
 </svg>
 </div>
 <p class="caption">Solid line: NAT network the head node uses for internet (licensing, updates). Dashed line: the private provisioning network BCM owns completely.</p>
