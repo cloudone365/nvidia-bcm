@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BCM lab on DGX Spark — partitioned build guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F3F5F6; --surface:#FFFFFF; --ink:#18212B; --muted:#5A6673; --line:#D5DBE0;
+  --bcm:#0E6B69; --bcm-soft:#DCEFEE; --llm:#A8661A; --llm-soft:#F6E9D6;
+  --host:#44515E; --host-soft:#E6EAEE; --warn:#9B2C2C; --warn-soft:#F8E3E3;
+  --code-bg:#1D2530; --code-ink:#E4EAF0; --code-muted:#8C9AAA;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11161C; --surface:#18202A; --ink:#E3E8EE; --muted:#9AA7B4; --line:#2C3743;
+    --bcm:#4FBDB9; --bcm-soft:#15302F; --llm:#E0A15A; --llm-soft:#33261A;
+    --host:#A7B3BF; --host-soft:#222B35; --warn:#F08A8A; --warn-soft:#3A1F22;
+    --code-bg:#0B1016; --code-ink:#DCE3EA; --code-muted:#7E8C9B;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11161C; --surface:#18202A; --ink:#E3E8EE; --muted:#9AA7B4; --line:#2C3743;
+  --bcm:#4FBDB9; --bcm-soft:#15302F; --llm:#E0A15A; --llm-soft:#33261A;
+  --host:#A7B3BF; --host-soft:#222B35; --warn:#F08A8A; --warn-soft:#3A1F22;
+  --code-bg:#0B1016; --code-ink:#DCE3EA; --code-muted:#7E8C9B;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 16px);scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Public Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+code,pre,kbd{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+a{color:var(--bcm)}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--llm);outline-offset:2px;border-radius:3px}
+
+.shell{display:grid;grid-template-columns:260px minmax(0,1fr);max-width:1180px;margin:0 auto;gap:48px;padding:0 24px}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;max-height:100vh;overflow:auto;padding:40px 0 40px}
+nav.toc p{font-weight:700;margin:0 0 10px;font-size:15px}
+nav.toc ol{list-style:none;margin:0;padding:0;counter-reset:t}
+nav.toc li{margin:0}
+nav.toc a{display:block;padding:5px 0 5px 12px;border-left:2px solid var(--line);color:var(--muted);text-decoration:none;font-size:14.5px;line-height:1.35}
+nav.toc a:hover{color:var(--ink);border-left-color:var(--ink)}
+nav.toc a.p-bcm{border-left-color:var(--bcm)}
+nav.toc a.p-llm{border-left-color:var(--llm)}
+nav.toc a.p-host{border-left-color:var(--host)}
+main{padding:40px 0 96px;max-width:780px}
+
+header.hero{padding:24px 0 8px}
+header.hero h1{font-size:clamp(34px,5vw,52px);line-height:1.05;letter-spacing:-.02em;font-weight:800;margin:0 0 18px}
+header.hero .lede{font-size:19px;color:var(--muted);max-width:62ch;margin:0 0 22px}
+.legend{display:flex;flex-wrap:wrap;gap:10px 22px;font-size:14.5px;margin:0 0 8px;padding:0;list-style:none}
+.legend li{display:flex;align-items:center;gap:8px}
+.sw{width:14px;height:14px;border-radius:3px;display:inline-block}
+.sw.bcm{background:var(--bcm)} .sw.llm{background:var(--llm)} .sw.host{background:var(--host)}
+
+h2{font-size:28px;line-height:1.2;letter-spacing:-.01em;margin:64px 0 6px;font-weight:800;display:flex;gap:14px;align-items:baseline}
+h2 .n{font-size:15px;font-weight:700;color:var(--surface);background:var(--host);border-radius:4px;padding:2px 8px;flex:none;position:relative;top:-4px}
+h2.bcm .n{background:var(--bcm)} h2.llm .n{background:var(--llm)}
+.touches{font-size:14px;color:var(--muted);margin:0 0 18px}
+h3{font-size:19px;margin:34px 0 8px;font-weight:700}
+p{margin:0 0 14px;max-width:72ch}
+ul.plain,ol.plain{margin:0 0 16px;padding-left:22px;max-width:70ch}
+ul.plain li,ol.plain li{margin:0 0 6px}
+
+pre{background:var(--code-bg);color:var(--code-ink);padding:16px 18px;border-radius:8px;overflow-x:auto;font-size:13.5px;line-height:1.55;margin:0 0 18px;position:relative}
+pre .c{color:var(--code-muted)}
+pre .h{color:#8FD6D2}
+:not(pre)>code{background:var(--host-soft);padding:1px 5px;border-radius:4px;font-size:.88em}
+.copy{position:absolute;top:8px;right:8px;background:transparent;color:var(--code-muted);border:1px solid #3A4654;border-radius:5px;font:600 12px "Public Sans",sans-serif;padding:3px 9px;cursor:pointer}
+.copy:hover{color:var(--code-ink);border-color:var(--code-muted)}
+
+.note{border-left:4px solid var(--host);background:var(--host-soft);padding:12px 16px;border-radius:0 6px 6px 0;margin:0 0 18px;max-width:72ch}
+.note.bcm{border-color:var(--bcm);background:var(--bcm-soft)}
+.note.llm{border-color:var(--llm);background:var(--llm-soft)}
+.note.warn{border-color:var(--warn);background:var(--warn-soft)}
+.note p:last-child{margin-bottom:0}
+.note strong:first-child{display:block;margin-bottom:2px}
+
+.tbl{overflow-x:auto;margin:0 0 20px}
+table{border-collapse:collapse;width:100%;font-size:15px;background:var(--surface)}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700;background:var(--host-soft)}
+td code{white-space:nowrap}
+tr.bcm td:first-child{border-left:4px solid var(--bcm)}
+tr.llm td:first-child{border-left:4px solid var(--llm)}
+tr.host td:first-child{border-left:4px solid var(--host)}
+
+.diagram{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;margin:18px 0 10px}
+.diagram svg{display:block;min-width:760px;width:100%;height:auto}
+svg text{font-family:"Public Sans",system-ui,sans-serif;fill:var(--ink)}
+svg .t-muted{fill:var(--muted)}
+svg .mono{font-family:"JetBrains Mono",monospace}
+svg .b-host{fill:var(--host-soft);stroke:var(--host);stroke-width:1.5}
+svg .b-bcm{fill:var(--bcm-soft);stroke:var(--bcm);stroke-width:1.5}
+svg .b-llm{fill:var(--llm-soft);stroke:var(--llm);stroke-width:1.5}
+svg .vm{fill:var(--surface);stroke:var(--bcm);stroke-width:1.5}
+svg .ct{fill:var(--surface);stroke:var(--llm);stroke-width:1.5}
+svg .net-ext{stroke:var(--host);stroke-width:2.5;fill:none}
+svg .net-int{stroke:var(--bcm);stroke-width:2.5;fill:none;stroke-dasharray:7 5}
+svg .gpu{fill:var(--llm);opacity:.18;stroke:var(--llm);stroke-width:1.5}
+.caption{font-size:14px;color:var(--muted);margin:0 0 20px}
+
+details.mobile-toc{display:none}
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr;gap:0;padding:0 18px}
+  nav.toc{display:none}
+  details.mobile-toc{display:block;margin:18px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+  details.mobile-toc summary{font-weight:700;cursor:pointer}
+  details.mobile-toc ol{padding-left:20px;margin:10px 0 4px}
+  details.mobile-toc a{color:var(--ink)}
+  main{padding-top:10px}
+  body{font-size:16px}
+  h2{font-size:24px}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#arch" class="p-host">Architecture</a></li>
+    <li><a href="#budget" class="p-host">Resource budget</a></li>
+    <li><a href="#s1" class="p-host">1. Survey the host</a></li>
+    <li><a href="#s2" class="p-host">2. Install KVM and libvirt</a></li>
+    <li><a href="#s3" class="p-host">3. Build the isolation boundary</a></li>
+    <li><a href="#s4" class="p-bcm">4. Create the lab networks</a></li>
+    <li><a href="#s5" class="p-bcm">5. Stage storage and the ISO</a></li>
+    <li><a href="#s6" class="p-bcm">6. Create the head node VM</a></li>
+    <li><a href="#s7" class="p-bcm">7. Run the BCM installer</a></li>
+    <li><a href="#s8" class="p-bcm">8. Post-install and licensing</a></li>
+    <li><a href="#s9" class="p-bcm">9. Provision compute node VMs</a></li>
+    <li><a href="#s10" class="p-bcm">10. Power control from BCM</a></li>
+    <li><a href="#s11" class="p-llm">11. Run LLMs in the workload partition</a></li>
+    <li><a href="#ops" class="p-host">Day-2 operations</a></li>
+    <li><a href="#teardown" class="p-host">Tear down the lab</a></li>
+    <li><a href="#trouble" class="p-host">Troubleshooting</a></li>
+    <li><a href="#caveats" class="p-host">Limits of this design</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <h1>A BCM lab inside one DGX Spark, walled off from your LLM work</h1>
+  <p class="lede">Run a complete NVIDIA Base Command Manager cluster — head node plus PXE-provisioned compute nodes — as KVM virtual machines on a fixed slice of CPU cores and memory, while the GB10 GPU and the rest of the machine stay free for models and tools.</p>
+  <ul class="legend" aria-label="Colour key used throughout this guide">
+    <li><span class="sw host"></span>DGX OS host and hypervisor</li>
+    <li><span class="sw bcm"></span>BCM partition (VMs)</li>
+    <li><span class="sw llm"></span>Workload partition (GPU, LLMs)</li>
+  </ul>
+  <details class="mobile-toc"><summary>Contents</summary>
+    <ol>
+      <li><a href="#arch">Architecture</a></li><li><a href="#budget">Resource budget</a></li>
+      <li><a href="#s1">Survey the host</a></li><li><a href="#s2">Install KVM and libvirt</a></li>
+      <li><a href="#s3">Build the isolation boundary</a></li><li><a href="#s4">Create the lab networks</a></li>
+      <li><a href="#s5">Stage storage and the ISO</a></li><li><a href="#s6">Create the head node VM</a></li>
+      <li><a href="#s7">Run the BCM installer</a></li><li><a href="#s8">Post-install and licensing</a></li>
+      <li><a href="#s9">Provision compute node VMs</a></li><li><a href="#s10">Power control from BCM</a></li>
+      <li><a href="#s11">Run LLMs in the workload partition</a></li><li><a href="#ops">Day-2 operations</a></li><li><a href="#teardown">Tear down the lab</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li><li><a href="#caveats">Limits of this design</a></li>
+    </ol>
+  </details>
+</header>
+
+<section id="arch">
+<h2><span class="n">A</span>Architecture</h2>
+<p class="touches">What you are building before touching anything.</p>
+<p>DGX OS stays the only operating system on the metal. KVM turns it into a hypervisor; libvirt manages the VMs. Two cgroup boundaries split the 20 Arm cores and 128 GB of unified memory: one slice holds every BCM VM, the other is where containers using the GPU run. BCM never sees the Spark itself — it manages only its own virtual cluster, on a private network that has no path to your LAN.</p>
+
+<div class="diagram" role="img" aria-label="Architecture diagram: DGX Spark host running DGX OS and KVM, split into a BCM partition with a head node VM and two compute node VMs on an isolated internal network, and a workload partition with the GB10 GPU and LLM containers.">
+<svg viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg">
+  <!-- host -->
+  <rect x="10" y="10" width="880" height="580" rx="14" class="b-host"/>
+  <text x="30" y="40" font-size="18" font-weight="800">DGX Spark · GB10 (20 Arm cores, 128 GB unified memory)</text>
+  <text x="30" y="62" font-size="14" class="t-muted">DGX OS (Ubuntu 24.04 arm64) · KVM · libvirt · Docker + NVIDIA Container Toolkit</text>
+
+  <!-- BCM partition -->
+  <rect x="30" y="82" width="470" height="408" rx="10" class="b-bcm"/>
+  <text x="48" y="108" font-size="16" font-weight="800">BCM partition — machine.slice</text>
+  <text x="48" y="128" font-size="13" class="t-muted mono">AllowedCPUs=4-9 · MemoryMax=34G</text>
+
+  <!-- NAT net -->
+  <line x1="60" y1="160" x2="480" y2="160" class="net-ext"/>
+  <text x="62" y="152" font-size="12.5" class="mono t-muted">virbr0 · "default" NAT · 192.168.122.0/24</text>
+
+  <!-- head VM -->
+  <rect x="60" y="190" width="200" height="118" rx="8" class="vm"/>
+  <text x="76" y="215" font-size="15" font-weight="700">bcm-head</text>
+  <text x="76" y="236" font-size="12.5" class="t-muted">4 vCPU · 20 GB · 120 GB</text>
+  <text x="76" y="256" font-size="12.5" class="mono">ext 192.168.122.10</text>
+  <text x="76" y="274" font-size="12.5" class="mono">int 10.141.255.254</text>
+  <text x="76" y="294" font-size="12" class="t-muted">DHCP · TFTP · CMDaemon · Slurm</text>
+  <line x1="120" y1="160" x2="120" y2="190" class="net-ext"/>
+  <line x1="200" y1="308" x2="200" y2="380" class="net-int"/>
+
+  <!-- internal net -->
+  <line x1="60" y1="380" x2="480" y2="380" class="net-int"/>
+  <text x="62" y="372" font-size="12.5" class="mono" fill="currentColor"><tspan class="t-muted">bcm-internal · isolated · 10.141.0.0/16</tspan></text>
+
+  <!-- nodes -->
+  <rect x="60" y="410" width="190" height="62" rx="8" class="vm"/>
+  <text x="76" y="435" font-size="15" font-weight="700">node001</text>
+  <text x="76" y="456" font-size="12.5" class="t-muted">2 vCPU · 4 GB · PXE boot</text>
+  <line x1="155" y1="380" x2="155" y2="410" class="net-int"/>
+  <rect x="280" y="410" width="190" height="62" rx="8" class="vm"/>
+  <text x="296" y="435" font-size="15" font-weight="700">node002</text>
+  <text x="296" y="456" font-size="12.5" class="t-muted">2 vCPU · 4 GB · PXE boot</text>
+  <line x1="375" y1="380" x2="375" y2="410" class="net-int"/>
+
+  <text x="290" y="215" font-size="12.5" class="t-muted">No host IP on bcm-internal.</text>
+  <text x="290" y="233" font-size="12.5" class="t-muted">BCM's DHCP cannot leak</text>
+  <text x="290" y="251" font-size="12.5" class="t-muted">onto your LAN.</text>
+
+  <!-- workload partition -->
+  <rect x="520" y="82" width="350" height="408" rx="10" class="b-llm"/>
+  <text x="538" y="108" font-size="16" font-weight="800">Workload partition</text>
+  <text x="538" y="128" font-size="13" class="t-muted mono">cpuset 10-19 · ~80 GB left</text>
+  <rect x="540" y="148" width="310" height="70" rx="8" class="gpu"/>
+  <text x="558" y="178" font-size="15" font-weight="700">GB10 Blackwell GPU</text>
+  <text x="558" y="199" font-size="12.5" class="t-muted">host only · not passed to VMs</text>
+  <rect x="540" y="236" width="148" height="56" rx="8" class="ct"/>
+  <text x="554" y="260" font-size="14" font-weight="700">vLLM / NIM</text>
+  <text x="554" y="279" font-size="12" class="t-muted">container</text>
+  <rect x="702" y="236" width="148" height="56" rx="8" class="ct"/>
+  <text x="716" y="260" font-size="14" font-weight="700">Ollama</text>
+  <text x="716" y="279" font-size="12" class="t-muted">container</text>
+  <rect x="540" y="306" width="148" height="56" rx="8" class="ct"/>
+  <text x="554" y="330" font-size="14" font-weight="700">Open WebUI</text>
+  <text x="554" y="349" font-size="12" class="t-muted">container</text>
+  <rect x="702" y="306" width="148" height="56" rx="8" class="ct"/>
+  <text x="716" y="330" font-size="14" font-weight="700">Jupyter, tools</text>
+  <text x="716" y="349" font-size="12" class="t-muted">container</text>
+  <text x="540" y="398" font-size="12.5" class="t-muted">Framework-level memory caps</text>
+  <text x="540" y="416" font-size="12.5" class="t-muted">(e.g. --gpu-memory-utilization)</text>
+  <text x="540" y="434" font-size="12.5" class="t-muted">keep models out of VM memory.</text>
+
+  <!-- host reserved -->
+  <rect x="30" y="508" width="840" height="64" rx="10" fill="none" stroke="var(--host)" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="48" y="535" font-size="15" font-weight="700">Host reserve — cores 0-3, ~8 GB</text>
+  <text x="48" y="556" font-size="12.5" class="t-muted">DGX OS services, libvirtd, dockerd, desktop · physical 10 GbE → your LAN (optional br0 bridge for direct head-node access)</text>
+</svg>
+</div>
+<p class="caption">Solid line: NAT network the head node uses for internet (licensing, updates). Dashed line: the private provisioning network BCM owns completely.</p>
+
+<div class="note warn">
+<strong>Know the support position before you start.</strong>
+<p>CPU-only KVM guests run fine on DGX Spark in practice, but NVIDIA has stated in its developer forum that virtualization is not a supported use of the platform, though it is not actively disabled. GPU passthrough to a VM does not work. That is exactly why this design keeps the GPU on the host. Treat this as a lab, not a pattern for anything customer-facing.</p>
+</div>
+</section>
+
+<section id="budget">
+<h2><span class="n">B</span>Resource budget</h2>
+<p class="touches">Decide the split once; every later command uses these numbers.</p>
+<p>The GB10's memory is unified: every gigabyte a VM holds is a gigabyte the GPU cannot use for weights or KV cache. BCM's documented floor for an Arm head node is 16 GB RAM and 80 GB of disk, so the head node is the largest single cost. Pick one profile.</p>
+<div class="tbl"><table>
+<thead><tr><th>Slice</th><th>Lean profile</th><th>Comfortable profile (used below)</th></tr></thead>
+<tbody>
+<tr class="host"><td>Host reserve</td><td>cores 0-3 · ~8 GB</td><td>cores 0-3 · ~8 GB</td></tr>
+<tr class="bcm"><td>bcm-head</td><td>4 vCPU · 16 GB · 100 GB disk</td><td>4 vCPU · 20 GB · 120 GB disk</td></tr>
+<tr class="bcm"><td>Compute nodes</td><td>2 × (1 vCPU · 3 GB · 40 GB)</td><td>2 × (2 vCPU · 4 GB · 60 GB)</td></tr>
+<tr class="bcm"><td>BCM slice cap</td><td>cores 4-7 · MemoryMax=24G</td><td>cores 4-9 · MemoryMax=34G</td></tr>
+<tr class="llm"><td>Left for LLMs</td><td>cores 8-19 · ~96 GB</td><td>cores 10-19 · ~86 GB</td></tr>
+</tbody></table></div>
+<p>vCPUs are deliberately oversubscribed inside the BCM slice (8 vCPUs on 6 cores). A management cluster idles most of the time; it will not notice.</p>
+<div class="note">
+<strong>The partition is elastic.</strong>
+<p>Shutting the BCM VMs down returns their memory to the pool immediately. When you want to load a model that needs everything, run <code>virsh shutdown</code> on the lab and start it again afterwards.</p>
+</div>
+</section>
+
+<section id="s1">
+<h2 class="host"><span class="n">1</span>Survey the host</h2>
+<p class="touches">Touches: DGX OS host only. Nothing is changed in this step.</p>
+<h3>Confirm hardware virtualization is exposed</h3>
+<pre><code><span class="c"># Should list /dev/kvm. If missing, stop here: the kernel module is not loaded.</span>
+ls -l /dev/kvm
+lsmod | grep kvm
+uname -r          <span class="c"># note the kernel; DGX OS updates can change it</span>
+free -g           <span class="c"># expect ~119 GB usable of 128 GB</span>
+df -h /var/lib    <span class="c"># VM disks land here; need ~250 GB free</span></code></pre>
+
+<h3>Map the two kinds of core</h3>
+<p>The GB10 CPU has ten performance cores (Cortex-X925) and ten efficiency cores (Cortex-A725). Put BCM on efficiency cores and give performance cores to the workload side. The numbering is not guaranteed, so check it:</p>
+<pre><code>lscpu -e=CPU,CORE,MAXMHZ
+<span class="c"># Cores with the higher MAXMHZ are the X925 performance cores.</span>
+<span class="c"># Cross-check by part number: 0xd85 = X925, 0xd87 = A725</span>
+grep -E 'processor|CPU part' /proc/cpuinfo | paste - -</code></pre>
+<div class="note">
+<strong>Substitute your own ranges.</strong>
+<p>This guide assumes CPUs 0-9 are efficiency cores and 10-19 are performance cores. If your output differs, keep the same logic — host on four efficiency cores, BCM on the remaining efficiency cores, workloads on all performance cores — and replace <code>0-3</code>, <code>4-9</code> and <code>10-19</code> everywhere below.</p>
+</div>
+
+<h3>Identify the network interfaces</h3>
+<pre><code>ip -br link
+nmcli device status</code></pre>
+<p>Note the name of the wired 10 GbE port (something like <code>enP7s7</code>). Only a wired port can be bridged; Wi-Fi cannot. The two ConnectX-7 QSFP ports are not needed for this lab.</p>
+</section>
+
+<section id="s2">
+<h2 class="host"><span class="n">2</span>Install KVM and libvirt</h2>
+<p class="touches">Touches: DGX OS host. Adds packages, groups and services.</p>
+<pre><code>sudo apt update
+sudo apt install -y qemu-system-arm qemu-efi-aarch64 qemu-utils \
+  libvirt-daemon-system libvirt-clients virtinst virt-manager virt-viewer \
+  ovmf cpu-checker
+
+sudo usermod -aG libvirt,kvm $USER
+sudo systemctl enable --now libvirtd
+<span class="c"># Log out and back in (or reboot) so the group membership applies.</span></code></pre>
+
+<h3>Verify</h3>
+<pre><code>virsh -c qemu:///system version
+virt-host-validate qemu
+<span class="c"># WARN lines about IOMMU or secure guest are fine for this lab.</span>
+<span class="c"># FAIL on "hardware virtualization" is not.</span>
+
+ls /usr/share/AAVMF/          <span class="c"># Arm UEFI firmware the VMs will boot from</span></code></pre>
+
+<h3>Bring up the default NAT network</h3>
+<p>On a fresh Spark the default libvirt network is often defined but inactive.</p>
+<pre><code>sudo virsh net-list --all
+sudo virsh net-start default
+sudo virsh net-autostart default</code></pre>
+</section>
+
+<section id="s3">
+<h2 class="host"><span class="n">3</span>Build the isolation boundary</h2>
+<p class="touches">Touches: systemd cgroups and libvirt hooks on the host. This is what makes the BCM side a partition rather than just some VMs.</p>
+<p>libvirt starts every VM inside <code>machine.slice</code>. Capping that slice caps the whole BCM lab at once, regardless of how many VMs you add later. Keeping host and container processes off the BCM cores makes the fence work in both directions.</p>
+
+<h3>Cap the BCM slice</h3>
+<pre><code><span class="c"># Persistent: systemd writes a drop-in under /etc/systemd/system.control/</span>
+sudo systemctl set-property machine.slice AllowedCPUs=4-9 MemoryMax=34G
+
+<span class="c"># Keep everything else off the BCM cores</span>
+sudo systemctl set-property system.slice AllowedCPUs=0-3,10-19
+sudo systemctl set-property user.slice   AllowedCPUs=0-3,10-19
+
+systemctl show machine.slice -p AllowedCPUs -p MemoryMax</code></pre>
+<p>Docker containers run under <code>system.slice</code>, so they automatically stay on cores 0-3 and 10-19. Step 11 narrows them further to 10-19.</p>
+
+<h3>Protect the VMs from the out-of-memory killer</h3>
+<p>If a model loads more than expected, the kernel will pick a victim. Make sure it is never the head node. A libvirt hook lowers each QEMU process's OOM score as it starts.</p>
+<pre><code>sudo tee /etc/libvirt/hooks/qemu &gt;/dev/null &lt;&lt;'EOF'
+#!/bin/bash
+# $1 = domain name, $2 = operation
+if [ "$2" = "started" ]; then
+  pid=$(cat "/run/libvirt/qemu/$1.pid" 2&gt;/dev/null)
+  [ -n "$pid" ] &amp;&amp; echo -800 &gt; "/proc/$pid/oom_score_adj"
+fi
+exit 0
+EOF
+sudo chmod 755 /etc/libvirt/hooks/qemu
+sudo systemctl restart libvirtd   <span class="c"># libvirt only discovers new hooks on restart</span></code></pre>
+<p>Each VM will also be created with locked memory (step 6), so its RAM is committed up front and never swapped or reclaimed by a hungry model.</p>
+
+<div class="note">
+<strong>Optional: turn off page merging.</strong>
+<p>If <code>cat /sys/kernel/mm/ksm/run</code> prints 1, set it to 0. Merging pages across VMs saves little in a two-node lab and adds CPU churn on the host cores.</p>
+</div>
+</section>
+
+<section id="s4">
+<h2 class="bcm"><span class="n">4</span>Create the lab networks</h2>
+<p class="touches">Touches: libvirt networks on the host. Your LAN is untouched unless you choose the optional bridge.</p>
+
+<h3>External side: reuse the NAT network</h3>
+<p>The head node's external NIC goes on libvirt's <code>default</code> network (192.168.122.0/24, gateway 192.168.122.1). It gets internet access for licensing and repositories, and you reach it from the Spark directly or from your laptop through an SSH jump. No host network changes are needed.</p>
+
+<h3>Internal side: an isolated provisioning network</h3>
+<p>BCM runs its own DHCP and PXE on the internal network. This network must have no libvirt DHCP, no forwarding and no host IP, so BCM owns it completely and nothing leaks out.</p>
+<pre><code>cat &gt; /tmp/bcm-internal.xml &lt;&lt;'EOF'
+&lt;network&gt;
+  &lt;name&gt;bcm-internal&lt;/name&gt;
+  &lt;bridge name="virbr-bcmi" stp="off" delay="0"/&gt;
+  &lt;mtu size="1500"/&gt;
+&lt;/network&gt;
+EOF
+sudo virsh net-define /tmp/bcm-internal.xml
+sudo virsh net-start bcm-internal
+sudo virsh net-autostart bcm-internal
+sudo virsh net-dumpxml bcm-internal   <span class="c"># confirm: no &lt;ip&gt;, no &lt;forward&gt;</span></code></pre>
+
+<h3>Optional: bridge the head node onto your LAN</h3>
+<p>Only do this if you want the head node to have its own LAN address instead of sitting behind NAT. Run it from the Spark's local console, not over SSH, because the wired connection drops while it moves onto the bridge.</p>
+<pre><code>NIC=enP7s7   <span class="c"># your wired port from step 1</span>
+sudo nmcli con add type bridge ifname br0 con-name br0 stp no ipv4.method auto ipv6.method auto
+sudo nmcli con add type bridge-slave ifname $NIC master br0 con-name br0-port
+sudo nmcli con down "$(nmcli -g GENERAL.CONNECTION device show $NIC)"
+sudo nmcli con up br0
+ip -br addr show br0</code></pre>
+<p>If you use the bridge, replace <code>network=default</code> with <code>bridge=br0</code> in step 6 and give the head node a LAN address in step 7.</p>
+</section>
+
+<section id="s5">
+<h2 class="bcm"><span class="n">5</span>Stage storage and the ISO</h2>
+<p class="touches">Touches: host filesystem.</p>
+<h3>Download the right ISO</h3>
+<p>From the BCM ISO download portal, use your product key and choose:</p>
+<ul class="plain">
+  <li>The current BCM 11 release.</li>
+  <li>Architecture <strong>aarch64 / arm64</strong> — the VMs are Arm, like the Spark.</li>
+  <li>Base distribution <strong>Ubuntu 24.04</strong>.</li>
+  <li>A generic hardware vendor. The VMs are not DGX systems, so skip the DGX software stack option.</li>
+</ul>
+<pre><code>sudo mkdir -p /var/lib/libvirt/images/iso
+sudo mv ~/Downloads/bcm-11*-ubuntu2404*aarch64*.iso /var/lib/libvirt/images/iso/bcm11-arm64.iso
+sudo chown libvirt-qemu:kvm /var/lib/libvirt/images/iso/bcm11-arm64.iso
+sha256sum /var/lib/libvirt/images/iso/bcm11-arm64.iso   <span class="c"># compare with the portal</span></code></pre>
+<div class="note">
+<strong>Licensing.</strong>
+<p>You need a BCM product key both to download and to activate the cluster in step 8. NVIDIA has offered no-cost BCM licensing in the past; check the current terms on the download portal or with your NVIDIA contact.</p>
+</div>
+</section>
+
+<section id="s6">
+<h2 class="bcm"><span class="n">6</span>Create the head node VM</h2>
+<p class="touches">Touches: a new VM inside machine.slice.</p>
+<p>Fixed MAC addresses make the NICs easy to recognise in the installer. Disks use virtio-SCSI so they appear as <code>/dev/sda</code>, which BCM's default disk layouts expect.</p>
+<pre><code>sudo virt-install \
+  --name bcm-head \
+  --osinfo ubuntu24.04 \
+  --arch aarch64 --machine virt \
+  --boot uefi \
+  --cpu host-passthrough \
+  --vcpus 4,cpuset=4-9 \
+  --memory 20480 \
+  --memorybacking locked=on \
+  --controller type=scsi,model=virtio-scsi \
+  --disk path=/var/lib/libvirt/images/bcm-head.qcow2,size=120,format=qcow2,bus=scsi,cache=none,discard=unmap \
+  --cdrom /var/lib/libvirt/images/iso/bcm11-arm64.iso \
+  --network network=default,model=virtio,mac=52:54:00:bc:00:01 \
+  --network network=bcm-internal,model=virtio,mac=52:54:00:bc:01:01 \
+  --graphics vnc,listen=127.0.0.1 --video virtio \
+  --input tablet,bus=usb --input keyboard,bus=usb \
+  --console pty,target_type=serial \
+  --noautoconsole</code></pre>
+
+<h3>Open the console</h3>
+<pre><code><span class="c"># On the Spark desktop</span>
+virt-viewer --connect qemu:///system bcm-head
+
+<span class="c"># Or from your laptop over SSH (Linux/macOS with virt-manager installed)</span>
+virt-manager -c qemu+ssh://&lt;spark-user&gt;@&lt;spark-ip&gt;/system</code></pre>
+<p>A blank screen at boot usually means the VM has no display device the firmware likes; see <a href="#trouble">troubleshooting</a>. The ISO's boot menu also offers a text installer, which works over the serial console with <code>virsh console bcm-head</code>.</p>
+
+<h3>Confirm it is fenced</h3>
+<pre><code>systemd-cgls -u machine.slice | head
+virsh vcpupin bcm-head         <span class="c"># every vCPU should show 4-9</span>
+systemd-cgtop -1 machine.slice</code></pre>
+</section>
+
+<section id="s7">
+<h2 class="bcm"><span class="n">7</span>Run the BCM installer</h2>
+<p class="touches">Touches: inside bcm-head only.</p>
+<p>At the ISO boot menu choose <strong>Start Base Command Manager Graphical Installer</strong>. Screen order varies slightly between releases; these are the values that matter.</p>
+<div class="tbl"><table>
+<thead><tr><th>Installer screen</th><th>Value for this lab</th></tr></thead>
+<tbody>
+<tr><td>License / EULA</td><td>Accept. The product key is applied after installation.</td></tr>
+<tr><td>Kernel modules, hardware detection</td><td>Defaults. Confirm two virtio NICs and one ~120 GB disk are listed.</td></tr>
+<tr><td>Installation source</td><td>The DVD/ISO.</td></tr>
+<tr><td>Cluster settings</td><td>Cluster name <code>sparklab</code>; your time zone; time server <code>pool.ntp.org</code>; nameserver <code>192.168.122.1</code>.</td></tr>
+<tr><td>Workload manager</td><td>None for now. You add Slurm once nodes are up (step 9).</td></tr>
+<tr><td>Network topology</td><td><strong>Type 1</strong>: nodes on a private internal network, head node routes to the outside.</td></tr>
+<tr><td>Head node</td><td>Hostname <code>bcm-head</code>; set the root password; hardware vendor Other/Generic.</td></tr>
+<tr><td>Compute nodes</td><td>2 nodes, base name <code>node</code>, 3 digits (node001, node002); vendor Other/Generic.</td></tr>
+<tr><td>BMC configuration</td><td>No BMC / IPMI. VMs don't have one; see step 10 for power control.</td></tr>
+<tr><td>externalnet</td><td>Static <code>192.168.122.10/24</code>, gateway <code>192.168.122.1</code>. (With the br0 bridge, use a free LAN address instead.)</td></tr>
+<tr><td>internalnet</td><td>Default <code>10.141.0.0/16</code>; head node <code>10.141.255.254</code>.</td></tr>
+<tr><td>Interface mapping</td><td>MAC <code>52:54:00:bc:00:01</code> → externalnet; MAC <code>52:54:00:bc:01:01</code> → internalnet. Names are typically <code>enp1s0</code>/<code>enp2s0</code> but match on MAC, not name.</td></tr>
+<tr><td>Disk layout</td><td>Default single-disk layout on <code>/dev/sda</code>.</td></tr>
+<tr><td>Additional software</td><td>Defaults. Skip CUDA and GPU packages; nothing in this cluster has a GPU.</td></tr>
+</tbody></table></div>
+<p>Review the summary, start the install, and let it reboot. Installation on the efficiency cores takes roughly 20-40 minutes.</p>
+<h3>Detach the ISO after the first boot</h3>
+<pre><code>sudo virsh domblklist bcm-head          <span class="c"># find the CD-ROM target, e.g. sdb</span>
+sudo virsh change-media bcm-head sdb --eject --config</code></pre>
+</section>
+
+<section id="s8">
+<h2 class="bcm"><span class="n">8</span>Post-install and licensing</h2>
+<p class="touches">Touches: inside bcm-head.</p>
+<h3>Log in</h3>
+<pre><code><span class="c"># From the Spark</span>
+ssh root@192.168.122.10
+
+<span class="c"># From your laptop, jumping through the Spark</span>
+ssh -J &lt;spark-user&gt;@&lt;spark-ip&gt; root@192.168.122.10</code></pre>
+
+<h3>Activate the licence</h3>
+<pre><code>request-license
+<span class="c"># Enter the product key; accept the defaults for the certificate details.</span>
+<span class="c"># The head node must reach the internet through the NAT network for this.</span>
+
+cmsh -c "main licenseinfo"</code></pre>
+
+<h3>Update and sanity-check</h3>
+<pre><code>apt update &amp;&amp; apt -y upgrade
+
+cmsh -c "network list"      <span class="c"># externalnet and internalnet</span>
+cmsh -c "device list"       <span class="c"># bcm-head UP; node001/node002 DOWN (not created yet)</span>
+cmsh -c "category list"     <span class="c"># default category, default software image</span>
+cmsh -c "softwareimage list"
+
+<span class="c"># DHCP should serve the internal network only</span>
+ss -ulpn | grep -E ':67|:69'</code></pre>
+
+<h3>Reach Base View (the web GUI)</h3>
+<pre><code><span class="c"># On your laptop: forward a local port through the Spark</span>
+ssh -L 8081:192.168.122.10:8081 &lt;spark-user&gt;@&lt;spark-ip&gt;
+<span class="c"># Then browse to https://localhost:8081/base-view and log in as root</span></code></pre>
+</section>
+
+<section id="s9">
+<h2 class="bcm"><span class="n">9</span>Provision compute node VMs</h2>
+<p class="touches">Touches: new VMs in machine.slice; BCM device records.</p>
+
+<h3>Tell BCM each node's MAC address</h3>
+<p>Pre-registering the MAC means each VM is identified as the right node the first time it PXE-boots, with no manual identification prompt.</p>
+<pre><code><span class="c"># On bcm-head</span>
+cmsh
+device
+use node001
+set mac 52:54:00:bc:01:11
+commit
+use node002
+set mac 52:54:00:bc:01:12
+commit
+quit</code></pre>
+
+<h3>Create the VMs on the Spark</h3>
+<p>Nodes attach only to <code>bcm-internal</code> and boot from the network first. The disk is second in the boot order, so a reinstall is always one reboot away.</p>
+<pre><code>for i in 1 2; do
+  n=$(printf "%03d" $i)
+  sudo virt-install \
+    --name bcm-node$n \
+    --osinfo ubuntu24.04 \
+    --arch aarch64 --machine virt \
+    --boot uefi \
+    --cpu host-passthrough \
+    --vcpus 2,cpuset=4-9 \
+    --memory 4096 \
+    --memorybacking locked=on \
+    --controller type=scsi,model=virtio-scsi \
+    --disk path=/var/lib/libvirt/images/bcm-node$n.qcow2,size=60,format=qcow2,bus=scsi,cache=none,discard=unmap,boot.order=2 \
+    --network network=bcm-internal,model=virtio,mac=52:54:00:bc:01:1$i,boot.order=1 \
+    --graphics vnc,listen=127.0.0.1 --video virtio \
+    --console pty,target_type=serial \
+    --noautoconsole
+done</code></pre>
+
+<h3>Watch them provision</h3>
+<pre><code><span class="c"># On bcm-head</span>
+tail -f /var/log/node-installer
+cmsh -c "device status"
+<span class="c"># Expect: installing → installer_callinginit → UP. First install takes 10-20 min.</span>
+
+ssh node001 hostname</code></pre>
+<p>If a node sits at the UEFI screen without getting an address, check <a href="#trouble">troubleshooting</a>.</p>
+
+<h3>Add a workload manager</h3>
+<pre><code>cm-wlm-setup
+<span class="c"># Choose Slurm; server role on bcm-head; client role on the "default" category.</span>
+
+sinfo
+srun -N2 hostname</code></pre>
+</section>
+
+<section id="s10">
+<h2 class="bcm"><span class="n">10</span>Power control from BCM <span style="font-weight:400;font-size:16px;color:var(--muted)">(optional)</span></h2>
+<p class="touches">Touches: a host service account and a script on bcm-head.</p>
+<p>Real clusters power nodes through IPMI or Redfish. VMs have neither, so a custom power script lets BCM call <code>virsh</code> on the Spark instead. Without this, power nodes on and off from the host yourself; everything else works the same.</p>
+
+<h3>On the Spark: a dedicated account</h3>
+<pre><code>sudo useradd -m -s /bin/bash -G libvirt bcmpower
+sudo -u bcmpower mkdir -p ~bcmpower/.ssh
+<span class="c"># Paste bcm-head's root public key (next block) into:</span>
+sudo -u bcmpower nano ~bcmpower/.ssh/authorized_keys</code></pre>
+<div class="note warn">
+<strong>Scope this account tightly.</strong>
+<p>Membership in the libvirt group can control every VM on the host. Use a key that exists only on bcm-head, and consider adding <code>from="192.168.122.10"</code> in front of the key in authorized_keys.</p>
+</div>
+
+<h3>On bcm-head: key and script</h3>
+<pre><code>ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519   <span class="c"># skip if it exists</span>
+cat /root/.ssh/id_ed25519.pub                          <span class="c"># → bcmpower's authorized_keys</span>
+ssh bcmpower@192.168.122.1 virsh -c qemu:///system list --all   <span class="c"># test</span>
+
+mkdir -p /cm/local/apps/cmd/scripts/powerscripts
+cat &gt; /cm/local/apps/cmd/scripts/powerscripts/virsh-power &lt;&lt;'EOF'
+#!/bin/bash
+# CMDaemon passes the action as $1 and the node name in CMD_HOSTNAME.
+dom="bcm-${CMD_HOSTNAME}"
+v="ssh -o BatchMode=yes bcmpower@192.168.122.1 virsh -c qemu:///system"
+case "${1,,}" in
+  on)     $v start "$dom" ;;
+  off)    $v destroy "$dom" ;;
+  reset)  $v reset "$dom" ;;
+  status) state=$($v domstate "$dom")
+          [ "$state" = "running" ] &amp;&amp; echo ON || echo OFF ;;
+esac
+exit 0
+EOF
+chmod 755 /cm/local/apps/cmd/scripts/powerscripts/virsh-power</code></pre>
+
+<h3>Attach it to the nodes</h3>
+<pre><code>cmsh
+category use default
+set powercontrol custom
+set custompowerscript /cm/local/apps/cmd/scripts/powerscripts/virsh-power
+commit
+quit
+
+cmsh -c "device power status -n node001..node002"
+cmsh -c "device power reset -n node002"</code></pre>
+<p>Check the argument and status conventions against the "custom power management" section of the BCM Administrator Manual for your release; if they differ, only the <code>case</code> block needs to change.</p>
+</section>
+
+<section id="s11">
+<h2 class="llm"><span class="n">11</span>Run LLMs in the workload partition</h2>
+<p class="touches">Touches: Docker on the host. The GPU stays here and never enters a VM.</p>
+<p>DGX OS ships Docker with the NVIDIA Container Toolkit. Two habits keep workloads on their side of the fence: pin containers to the performance cores, and cap GPU memory in the framework itself.</p>
+
+<h3>Pin to the performance cores</h3>
+<pre><code><span class="c"># Ollama</span>
+docker run -d --name ollama --gpus all --cpuset-cpus 10-19 \
+  -v ollama:/root/.ollama -p 11434:11434 --restart unless-stopped \
+  ollama/ollama
+
+<span class="c"># vLLM (use the arm64 image NVIDIA publishes for DGX Spark)</span>
+docker run -d --name vllm --gpus all --cpuset-cpus 10-19 --ipc=host \
+  -p 8000:8000 -v ~/.cache/huggingface:/root/.cache/huggingface \
+  &lt;vllm-image-for-spark&gt; \
+  vllm serve &lt;model&gt; --gpu-memory-utilization 0.60 --max-model-len 32768</code></pre>
+
+<h3>Cap memory where the model runs</h3>
+<p>On unified memory, a model's weights and KV cache come from the same pool the VMs use. Docker's <code>--memory</code> flag is not a reliable limit for GPU allocations here, so set the limit inside the framework:</p>
+<ul class="plain">
+  <li><strong>vLLM</strong>: <code>--gpu-memory-utilization</code> is a fraction of total memory. With about 34 GB held by the BCM lab and 8 GB by the host, stay at 0.60-0.65.</li>
+  <li><strong>Ollama and llama.cpp</strong>: bound the context length and the number of models kept loaded (<code>OLLAMA_MAX_LOADED_MODELS=1</code>).</li>
+  <li><strong>NIM containers</strong>: follow the model card's memory profile and pick one that fits in ~80 GB.</li>
+</ul>
+
+<h3>Watch both sides at once</h3>
+<pre><code>nvidia-smi                          <span class="c"># GPU processes and memory</span>
+free -g                             <span class="c"># unified pool as the OS sees it</span>
+systemd-cgtop -d 2                  <span class="c"># machine.slice vs system.slice in real time</span>
+docker stats --no-stream</code></pre>
+<div class="note llm">
+<strong>If you need the whole machine.</strong>
+<p>Stop the lab (<code>virsh shutdown</code> the nodes, then the head), raise the framework cap, and run the job. Start the lab again when you're done; BCM resumes where it left off.</p>
+</div>
+</section>
+
+<section id="ops">
+<h2 class="host"><span class="n">D</span>Day-2 operations</h2>
+<p class="touches">Keeping the lab tidy once it works.</p>
+
+<h3>Start and stop in order</h3>
+<pre><code><span class="c"># Start: head first, nodes after DHCP/TFTP are up</span>
+virsh -c qemu:///system start bcm-head
+sleep 120
+for n in bcm-node001 bcm-node002; do virsh -c qemu:///system start $n; done
+
+<span class="c"># Stop: nodes first</span>
+for n in bcm-node001 bcm-node002; do virsh -c qemu:///system shutdown $n; done
+sleep 60
+virsh -c qemu:///system shutdown bcm-head</code></pre>
+<p>To bring only the head node up at boot, run <code>virsh autostart bcm-head</code> and leave the nodes manual. libvirt has no ordering between autostarted VMs.</p>
+
+<h3>Back up</h3>
+<p>Internal snapshots are unreliable for UEFI Arm guests, so take cold copies of the disk, the UEFI variable store and the definition:</p>
+<pre><code>virsh -c qemu:///system shutdown bcm-head   <span class="c"># wait until "shut off"</span>
+B=/srv/backup/bcm-$(date +%F); sudo mkdir -p $B
+sudo cp --sparse=always /var/lib/libvirt/images/bcm-head.qcow2 $B/
+sudo cp /var/lib/libvirt/qemu/nvram/bcm-head_VARS.fd $B/
+virsh -c qemu:///system dumpxml bcm-head | sudo tee $B/bcm-head.xml &gt;/dev/null</code></pre>
+<p>Compute nodes don't need backing up; BCM reprovisions them from the software image.</p>
+
+<h3>Things worth practising once it runs</h3>
+<ul class="plain">
+  <li>Clone the default software image, change a package, assign it to a new category and watch nodes pick it up with <code>imageupdate</code>.</li>
+  <li>Add a third node VM and register it with the <code>foreach</code> and <code>clone</code> commands in cmsh.</li>
+  <li>Build an x86_64 image with <code>cm-image</code> for mixed-architecture practice. It runs under QEMU emulation, so expect hours rather than minutes.</li>
+  <li>Set up head node HA with a second head VM on the same two networks.</li>
+</ul>
+</section>
+
+<section id="teardown">
+<h2 class="host"><span class="n">X</span>Tear down the lab</h2>
+<p class="touches">Touches: everything this guide created on the host. Your LLM containers, models and DGX OS configuration are not affected.</p>
+<p>Undo the build in reverse order: VMs first, then the networks, the isolation boundary, and finally the leftover accounts and files. Each step is independent, so you can stop after removing the VMs if you only want the memory and disk back.</p>
+
+<div class="note warn">
+<strong>This is permanent.</strong>
+<p>Deleting the head node disk deletes the cluster configuration, software images and licence state. If you might rebuild, take the cold backup from <a href="#ops">Day-2 operations</a> first.</p>
+</div>
+
+<h3>1. Delete the VMs and their disks</h3>
+<pre><code>for d in bcm-node002 bcm-node001 bcm-head; do
+  sudo virsh destroy "$d" 2&gt;/dev/null      <span class="c"># force off if running</span>
+  sudo virsh undefine "$d" --nvram --remove-all-storage
+done
+
+sudo virsh list --all                      <span class="c"># no bcm-* entries left</span>
+ls /var/lib/libvirt/images/                <span class="c"># no bcm-*.qcow2 left</span>
+ls /var/lib/libvirt/qemu/nvram/ | grep bcm <span class="c"># no UEFI variable stores left</span></code></pre>
+<p><code>--remove-all-storage</code> also deletes any disk still attached to the VM, including the ISO if it wasn't ejected in step 7. The ISO is removed separately below either way.</p>
+
+<h3>2. Remove the lab networks</h3>
+<pre><code>sudo virsh net-destroy bcm-internal
+sudo virsh net-undefine bcm-internal
+
+<span class="c"># Only if nothing else on the Spark uses libvirt's NAT network:</span>
+sudo virsh net-destroy default
+sudo virsh net-autostart default --disable
+
+sudo virsh net-list --all</code></pre>
+
+<h3>3. Remove the LAN bridge (only if you created br0)</h3>
+<p>Do this from the Spark's local console, because the wired connection drops briefly.</p>
+<pre><code>NIC=enP7s7   <span class="c"># your wired port</span>
+sudo nmcli con delete br0-port br0
+sudo nmcli device connect $NIC
+ip -br addr show $NIC                      <span class="c"># the port has its LAN address again</span></code></pre>
+
+<h3>4. Remove the isolation boundary</h3>
+<p><code>systemctl revert</code> deletes the drop-ins that <code>set-property</code> wrote, returning all three slices to their defaults so LLM workloads can use every core again.</p>
+<pre><code>sudo systemctl revert machine.slice system.slice user.slice
+sudo systemctl daemon-reload
+
+systemctl show machine.slice system.slice user.slice -p AllowedCPUs -p MemoryMax
+<span class="c"># Expect AllowedCPUs empty and MemoryMax=infinity</span></code></pre>
+<p>If you had narrowed Docker containers to <code>--cpuset-cpus 10-19</code>, recreate them without that flag to let them use all 20 cores.</p>
+
+<h3>5. Remove the libvirt hook and power account</h3>
+<pre><code>sudo rm -f /etc/libvirt/hooks/qemu
+sudo systemctl restart libvirtd
+
+<span class="c"># Only if you set up BCM power control in step 10</span>
+sudo userdel -r bcmpower</code></pre>
+
+<h3>6. Delete the ISO and backups</h3>
+<pre><code>sudo rm -f /var/lib/libvirt/images/iso/bcm11-arm64.iso
+sudo rmdir /var/lib/libvirt/images/iso 2&gt;/dev/null
+sudo rm -rf /srv/backup/bcm-*              <span class="c"># only if you no longer want them</span></code></pre>
+
+<h3>7. Remove the virtualization stack (optional)</h3>
+<p>Skip this if you run any other VMs on the Spark. Otherwise, it returns the host to its original package set.</p>
+<pre><code>sudo systemctl disable --now libvirtd
+sudo apt purge -y qemu-system-arm qemu-efi-aarch64 libvirt-daemon-system \
+  libvirt-clients virtinst virt-manager virt-viewer cpu-checker
+sudo apt autoremove -y
+sudo gpasswd -d $USER libvirt
+sudo gpasswd -d $USER kvm</code></pre>
+<p>Don't purge <code>qemu-utils</code> or <code>ovmf</code> without checking <code>apt</code>'s removal list first; other DGX OS tooling may depend on them.</p>
+
+<h3>8. Confirm the Spark is back to normal</h3>
+<pre><code>free -g                                    <span class="c"># ~119 GB available again</span>
+nvidia-smi                                 <span class="c"># GPU unaffected</span>
+ip -br link | grep -E 'virbr|br0'          <span class="c"># no lab bridges remain</span>
+df -h /var/lib                             <span class="c"># disk space recovered</span></code></pre>
+
+<div class="note">
+<strong>Licence reuse.</strong>
+<p>BCM licences are issued to a specific head node. If you plan to rebuild the lab later with the same product key, check with NVIDIA whether it needs to be reissued before you run <code>request-license</code> on the new head node.</p>
+</div>
+</section>
+
+<section id="trouble">
+<h2 class="host"><span class="n">T</span>Troubleshooting</h2>
+<p class="touches">The failures this setup actually produces.</p>
+<div class="tbl"><table>
+<thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
+<tbody>
+<tr><td>VM starts but the screen is black or it never reaches the ISO menu</td><td>Firmware or display mismatch. Confirm <code>--boot uefi</code> picked AAVMF (<code>virsh dumpxml bcm-head | grep -i loader</code>). Try <code>--video ramfb</code>, or use the text installer over <code>virsh console</code>.</td></tr>
+<tr><td>Mouse cursor doesn't track in the console</td><td>Add a USB tablet input device (<code>--input tablet,bus=usb</code>, already in the commands above).</td></tr>
+<tr><td>Node stays at UEFI with no DHCP offer</td><td>Check the node NIC is on <code>bcm-internal</code>, its MAC matches the value set in cmsh, and the head's internal NIC is mapped to internalnet. On the head: <code>journalctl -u dhcpd -f</code> while the node boots.</td></tr>
+<tr><td>Node gets an address but the node-installer fails on disk</td><td>The disk isn't where the layout expects it. Confirm the node disk is on the SCSI bus (<code>/dev/sda</code>), or edit the category's disk setup to include <code>/dev/vda</code>.</td></tr>
+<tr><td><code>request-license</code> can't connect</td><td>No outbound path. From the head: <code>ping 192.168.122.1</code>, then <code>curl -I https://www.nvidia.com</code>. Check the nameserver is <code>192.168.122.1</code> and <code>virsh net-list</code> shows default active.</td></tr>
+<tr><td>VM fails to start with "cannot lock memory"</td><td>Locked memory exceeds the slice cap or memlock limit. Raise <code>MemoryMax</code> on machine.slice or reduce the VM's RAM.</td></tr>
+<tr><td>A VM was killed while a model loaded</td><td>Check <code>journalctl -k | grep -i oom</code>. Confirm the hook ran (<code>cat /proc/$(pgrep -f 'guest=bcm-head')/oom_score_adj</code> shows -800) and lower the framework's memory fraction.</td></tr>
+<tr><td>Spark lost its wired connection after bridging</td><td>From the local console: <code>nmcli con delete br0 br0-port</code> and bring the original connection back up.</td></tr>
+<tr><td>Things broke after a DGX OS update</td><td>A new kernel may reset kvm or cgroup behaviour. Recheck <code>/dev/kvm</code>, <code>systemctl show machine.slice</code> and <code>virt-host-validate</code>.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="caveats">
+<h2 class="host"><span class="n">L</span>Limits of this design</h2>
+<p class="touches">What the lab can and can't teach you.</p>
+<ul class="plain">
+  <li>No GPU inside the cluster. You can practise provisioning, images, categories, Slurm, monitoring and HA, but not GPU scheduling, DCGM health checks or MIG.</li>
+  <li>No real BMCs. Power control is simulated through virsh, and BMC network configuration can't be exercised.</li>
+  <li>Arm-only by default. The VMs match the Spark's architecture; x86 nodes would need full emulation and would be very slow.</li>
+  <li>Unsupported host configuration. Virtualization on DGX Spark works but isn't a supported NVIDIA use, and future DGX OS updates could change that.</li>
+  <li>Shared memory pool. The cgroup cap and locked memory protect the VMs, but the GPU side still has to be configured to leave room; nothing enforces that from the hardware.</li>
+</ul>
+</section>
+</main>
+</div>
+
+<script>
+document.querySelectorAll('pre').forEach(function(pre){
+  var b=document.createElement('button');
+  b.className='copy'; b.type='button'; b.textContent='Copy';
+  b.addEventListener('click',function(){
+    var text=pre.querySelector('code').innerText;
+    var done=function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)};
+    try{
+      navigator.clipboard.writeText(text).then(done,function(){fallback(text);done()});
+    }catch(e){fallback(text);done()}
+  });
+  pre.appendChild(b);
+});
+function fallback(t){
+  try{var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);}catch(e){}
+}
+</script>
+</body>
+</html>
