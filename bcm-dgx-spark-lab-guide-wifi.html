@@ -104,10 +104,17 @@ svg .net-ext{stroke:var(--host);stroke-width:2.5;fill:none}
 svg .net-int{stroke:var(--bcm);stroke-width:2.5;fill:none;stroke-dasharray:7 5}
 svg .gpu{fill:var(--llm);opacity:.18;stroke:var(--llm);stroke-width:1.5}
 .caption{font-size:14px;color:var(--muted);margin:0 0 20px}
+details.diag{border:1px solid var(--line);border-left:4px solid var(--warn);background:var(--surface);border-radius:0 8px 8px 0;margin:26px 0 8px;padding:0 18px}
+details.diag summary{cursor:pointer;font-weight:700;padding:12px 0;list-style-position:inside}
+details.diag[open] summary{border-bottom:1px solid var(--line);margin-bottom:14px}
+details.diag .dx{margin:0 0 18px}
+details.diag .dx .sym{font-weight:700;margin:0 0 6px}
+details.diag h4{font-size:16px;margin:18px 0 8px}
 
 details.mobile-toc{display:none}
 @media (max-width:900px){
-  .shell{grid-template-columns:1fr;gap:0;padding:0 18px}
+  .shell{grid-template-columns:minmax(0,1fr);gap:0;padding:0 16px}
+  main{min-width:0}
   nav.toc{display:none}
   details.mobile-toc{display:block;margin:18px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
   details.mobile-toc summary{font-weight:700;cursor:pointer}
@@ -153,6 +160,7 @@ details.mobile-toc{display:none}
     <li><span class="sw bcm"></span>BCM partition (VMs)</li>
     <li><span class="sw llm"></span>Workload partition (GPU, LLMs)</li>
   </ul>
+  <p class="caption">Every step ends with a <strong>Diagnose this step</strong> panel: the checks to run when that step doesn't behave, taken from a real install on a DGX Spark.</p>
   <details class="mobile-toc"><summary>Contents</summary>
     <ol>
       <li><a href="#arch">Architecture</a></li><li><a href="#budget">Resource budget</a></li>
@@ -267,7 +275,7 @@ details.mobile-toc{display:none}
 <tr class="bcm"><td>BCM slice cap</td><td>cores 4,10-12 · MemoryMax=24G</td><td>cores 4,10-14 · MemoryMax=34G</td></tr>
 <tr class="llm"><td>Left for LLMs</td><td>cores 5-9,13-19 · ~96 GB</td><td>cores 5-9,15-19 · ~86 GB</td></tr>
 </tbody></table></div>
-<p>vCPUs are deliberately oversubscribed inside the BCM slice (8 vCPUs on 6 cores). A management cluster idles most of the time; it will not notice.</p>
+<p>The comfortable profile puts 8 vCPUs on 6 cores. That is optional: it gives the head node 4 vCPUs so the installer and image builds run faster, and a management cluster idles most of the time, so the overlap rarely matters. To avoid it, give the head node 2 vCPUs (2 + 2 + 2 = 6), or widen the slice to 8 cores at the cost of host or workload cores.</p>
 <div class="note">
 <strong>The partition is elastic.</strong>
 <p>Shutting the BCM VMs down returns their memory to the pool immediately. When you want to load a model that needs everything, run <code>virsh shutdown</code> on the lab and start it again afterwards.</p>
@@ -337,6 +345,34 @@ iw dev wlP9s9 get power_save                            <span class="c"># Power 
 <p>The lab uses 192.168.122.0/24 (NAT) and 10.141.0.0/16 (BCM internal). Neither overlaps your home LAN at 192.168.0.0/24, so the defaults are safe. If your LAN mask is wider than /24 (for example 192.168.0.0/16), it would overlap the NAT network; in that case change libvirt's default network to another range such as 172.30.122.0/24 before step 6.</p>
 <pre><code>ip -4 route                         <span class="c"># 192.168.0.0/24 dev wlP9s9 … confirms the mask</span></code></pre>
 <p>The wired 10 GbE port and the two ConnectX-7 QSFP ports are not used by this lab.</p>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym"><code>/dev/kvm</code> doesn't exist</p>
+<p>The KVM module isn't loaded. Check the kernel log, then try loading it; if it still fails, virtualization isn't available on this kernel and nothing later will work.</p><pre><code>dmesg | grep -i kvm
+sudo modprobe kvm
+ls -l /dev/kvm</code></pre>
+</div>
+<div class="dx">
+<p class="sym"><code>lscpu</code> shows no MAXMHZ column or identical values</p>
+<p>Use the part-number method instead: <code>0xd87</code> is an efficiency core (A725), <code>0xd85</code> a performance core (X925).</p><pre><code>grep -E 'processor|CPU part' /proc/cpuinfo | paste - -</code></pre>
+</div>
+<div class="dx">
+<p class="sym"><code>wlP9s9</code> isn't connected or has no 192.168.0.x address</p>
+<pre><code>nmcli device wifi list
+nmcli device wifi connect "&lt;SSID&gt;" --ask
+ip -4 -br addr show wlP9s9</code></pre>
+</div>
+<div class="dx">
+<p class="sym">The Spark's address changes after a reboot</p>
+<p>Every way into the lab goes through this address. Add a DHCP reservation on the router for the MAC shown by <code>ip link show wlP9s9</code>, or set the address statically as above.</p>
+</div>
+<div class="dx">
+<p class="sym">SSH sessions freeze after a few idle minutes</p>
+<pre><code>iw dev wlP9s9 get power_save         <span class="c"># should be off</span></code></pre><p>If it's on, repeat the power-saving commands above. On the client, <code>ServerAliveInterval 30</code> in <code>~/.ssh/config</code> also keeps sessions alive.</p>
+</div>
+</details>
 </section>
 
 <section id="s2">
@@ -354,10 +390,11 @@ sudo systemctl enable --now libvirtd
 <h3>Verify</h3>
 <pre><code>virsh -c qemu:///system version
 virt-host-validate qemu
-<span class="c"># WARN lines about IOMMU or secure guest are fine for this lab.</span>
-<span class="c"># FAIL on "hardware virtualization" is not.</span>
+<span class="c"># WARN lines about IOMMU, secure guest or the cgroup 'devices' controller are fine.</span>
+<span class="c"># FAIL on "hardware virtualization" or /dev/kvm is not.</span>
 
 ls /usr/share/AAVMF/          <span class="c"># Arm UEFI firmware the VMs will boot from</span></code></pre>
+<p>The listing includes two kinds of firmware. Files with <code>.ms</code> or <code>secboot</code> in the name enforce Secure Boot with Microsoft keys; the plain <code>AAVMF_CODE.fd</code> and <code>AAVMF_VARS.fd</code> do not. The BCM boot loader isn't signed for Secure Boot, so every VM in this guide is created with the plain pair (step 6).</p>
 
 <h3>Bring up the default NAT network</h3>
 <p>Installing libvirt creates a NAT network called <code>default</code>; the head node's external NIC will use it. On a fresh Spark it is often defined but inactive.</p>
@@ -366,6 +403,34 @@ sudo virsh net-start default
 sudo virsh net-autostart default</code></pre>
 <p>If <code>default</code> is missing from the list entirely, recreate it from the copy libvirt ships, then run the two commands above:</p>
 <pre><code>sudo virsh net-define /usr/share/libvirt/networks/default.xml</code></pre>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym"><code>virt-host-validate</code>: WARN “Checking for cgroup 'devices' controller support”</p>
+<p>Harmless. DGX OS uses cgroup v2, which has no <code>devices</code> controller; libvirt uses eBPF for device control instead. Don't switch the kernel back to cgroup v1 — it would break the slice limits in step 3. Confirm the controllers step 3 needs are present:</p><pre><code>stat -fc %T /sys/fs/cgroup/            <span class="c"># cgroup2fs</span>
+cat /sys/fs/cgroup/cgroup.controllers   <span class="c"># must include cpuset and memory</span></code></pre>
+</div>
+<div class="dx">
+<p class="sym"><code>virt-host-validate</code>: WARN about IOMMU or secure guest</p>
+<p>Also harmless for this lab: nothing is passed through to the VMs. Only a <strong>FAIL</strong> on hardware virtualization or <code>/dev/kvm</code> needs fixing.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>virsh</code> says permission denied without <code>sudo</code></p>
+<p>The new <code>libvirt</code> group membership only applies to new logins. Log out and back in, or keep using <code>sudo</code>. Check with <code>id | grep libvirt</code>.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>default</code> is missing from <code>virsh net-list --all</code></p>
+<pre><code>sudo virsh net-define /usr/share/libvirt/networks/default.xml
+sudo virsh net-start default
+sudo virsh net-autostart default</code></pre>
+</div>
+<div class="dx">
+<p class="sym"><code>AAVMF_CODE.fd</code> or <code>AAVMF_VARS.fd</code> is missing</p>
+<pre><code>sudo apt install --reinstall -y qemu-efi-aarch64
+ls /usr/share/AAVMF/</code></pre>
+</div>
+</details>
 </section>
 
 <section id="s3">
@@ -403,6 +468,29 @@ sudo systemctl restart libvirtd   <span class="c"># libvirt only discovers new h
 <strong>Optional: turn off page merging.</strong>
 <p>If <code>cat /sys/kernel/mm/ksm/run</code> prints 1, set it to 0. Merging pages across VMs saves little in a two-node lab and adds CPU churn on the host cores.</p>
 </div>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym">Check that the fence is really in place</p>
+<pre><code>systemctl show machine.slice -p AllowedCPUs -p MemoryMax
+cat /sys/fs/cgroup/machine.slice/cpuset.cpus.effective   <span class="c"># 4,10-14 once a VM runs</span>
+cat /sys/fs/cgroup/system.slice/cpuset.cpus.effective    <span class="c"># 0-3,5-9,15-19</span></code></pre>
+</div>
+<div class="dx">
+<p class="sym"><code>AllowedCPUs</code> shows the value but <code>cpuset.cpus.effective</code> doesn't</p>
+<p>The cpuset controller isn't enabled for that part of the tree. Check it's listed in the root's subtree control; it normally is on DGX OS once a slice sets <code>AllowedCPUs</code>.</p><pre><code>cat /sys/fs/cgroup/cgroup.subtree_control   <span class="c"># should include cpuset</span></code></pre>
+</div>
+<div class="dx">
+<p class="sym">You set the wrong ranges</p>
+<pre><code>sudo systemctl revert machine.slice system.slice user.slice
+sudo systemctl daemon-reload</code></pre><p>Then run the <code>set-property</code> commands again with the right values.</p>
+</div>
+<div class="dx">
+<p class="sym">Check the OOM protection hook works (once a VM is running)</p>
+<pre><code>cat /proc/$(pgrep -f 'guest=bcm-head')/oom_score_adj   <span class="c"># -800</span></code></pre><p>If it shows 0, confirm the hook is executable (<code>ls -l /etc/libvirt/hooks/qemu</code>) and restart libvirtd; it only picks up new hooks on restart.</p>
+</div>
+</details>
 </section>
 
 <section id="s4">
@@ -503,6 +591,32 @@ ss -tlnp | grep -E ':2222|:8081'    <span class="c"># both listening on 192.168.
 <strong>Keep these ports on the LAN.</strong>
 <p>Binding to 192.168.0.50 keeps the forwards off every other interface. Don't create router port forwards for 2222 or 8081: the head node's root login would then be reachable from the internet. Use key-based SSH on the head node and disable root password login once you've copied your key over.</p>
 </div>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym"><code>net-start default</code> fails with “network is already in use by interface”</p>
+<p>Your LAN or another network already uses 192.168.122.0/24. Edit the network to a free range (for example 172.30.122.0/24) with <code>sudo virsh net-edit default</code>, and use that range for the head node's external address in step 7.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>net-update … add ip-dhcp-host</code> fails because an entry exists</p>
+<pre><code>sudo virsh net-dumpxml default | grep host
+sudo virsh net-update default delete ip-dhcp-host \
+  "&lt;host mac='52:54:00:bc:00:01' name='bcm-head' ip='192.168.122.10'/&gt;" --live --config</code></pre><p>Then add it again.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>net-dumpxml bcm-internal</code> shows an <code>&lt;ip&gt;</code> or <code>&lt;forward&gt;</code> element</p>
+<p>libvirt would run its own DHCP there and fight BCM's. Destroy, undefine and redefine it from the XML above.</p><pre><code>sudo virsh net-destroy bcm-internal
+sudo virsh net-undefine bcm-internal</code></pre>
+</div>
+<div class="dx">
+<p class="sym">Port forwards on 192.168.0.50 don't answer</p>
+<pre><code>systemctl status bcm-fwd@2222 bcm-fwd@8081
+ss -tlnp | grep -E ':2222|:8081'
+cat /etc/default/bcm-fwd-*          <span class="c"># LISTEN must equal the current wlP9s9 address</span>
+sudo ufw status</code></pre>
+</div>
+</details>
 </section>
 
 <section id="s5">
@@ -516,25 +630,107 @@ ss -tlnp | grep -E ':2222|:8081'    <span class="c"># both listening on 192.168.
   <li>Base distribution <strong>Ubuntu 24.04</strong>.</li>
   <li>A generic hardware vendor. The VMs are not DGX systems, so skip the DGX software stack option.</li>
 </ul>
+<div class="note warn">
+<strong>The x86 and Arm ISOs look almost identical.</strong>
+<p>Both editions can arrive with names like <code>bcm-11.0-ubuntu2404.iso</code>. An x86 ISO attached to an Arm VM fails silently: the CD-ROM appears in the boot menu but selecting it does nothing. Rename every ISO to include its architecture as soon as it arrives, and verify it below before creating any VM.</p>
+</div>
+
+<h3>Get the ISO onto the Spark</h3>
+<p>Pick whichever is easiest. Downloading directly on the Spark avoids a second multi-gigabyte copy over Wi-Fi or the LAN.</p>
+<h4 style="margin:18px 0 6px">Option A: download directly on the Spark</h4>
+<p>Use the browser on the Spark's desktop, or enter your product key in a browser on another machine, right-click the download button, choose <strong>Copy link address</strong>, and fetch it over SSH straight away (the links expire):</p>
+<pre><code>cd ~
+wget -c -O bcm11-arm64.iso "PASTE-THE-DOWNLOAD-LINK-HERE"   <span class="c"># -c resumes if it drops</span></code></pre>
+<p>If the result is a small HTML file rather than several gigabytes, the link needed a browser session or had expired; copy a fresh one, or use the Spark's own browser.</p>
+<h4 style="margin:18px 0 6px">Option B: copy from a Windows PC (PowerShell)</h4>
+<pre><code><span class="c"># Find the ISO in Downloads and note its checksum</span>
+$iso = Get-ChildItem "$env:USERPROFILE\Downloads\bcm-11*.iso"
+$iso.FullName
+Get-FileHash $iso.FullName -Algorithm SHA256
+
+<span class="c"># Copy it to your home folder on the Spark, renamed on the way</span>
+scp $iso.FullName &lt;spark-user&gt;@192.168.0.50:~/bcm11-arm64.iso</code></pre>
+<p>PowerShell doesn't expand <code>*</code> for <code>scp</code>, which is why the path is looked up first. If <code>$iso.FullName</code> prints more than one file, pass the exact filename instead. WinSCP (SFTP to the Spark) does the same by drag and drop.</p>
+<h4 style="margin:18px 0 6px">Option C: copy from a Mac (Terminal)</h4>
+<pre><code>shasum -a 256 ~/Downloads/bcm-11*.iso
+scp ~/Downloads/bcm-11*.iso &lt;spark-user&gt;@192.168.0.50:~/bcm11-arm64.iso</code></pre>
+
+<h3>Put it in place</h3>
+<p>Your Spark user can't write into libvirt's image folder, so every option lands in your home folder first and is then moved with <code>sudo</code>. VMs run as <code>libvirt-qemu</code>, so hand the file to that user.</p>
 <pre><code>sudo mkdir -p /var/lib/libvirt/images/iso
-sudo mv ~/Downloads/bcm-11*-ubuntu2404*aarch64*.iso /var/lib/libvirt/images/iso/bcm11-arm64.iso
+sudo mv ~/bcm11-arm64.iso /var/lib/libvirt/images/iso/bcm11-arm64.iso
 sudo chown libvirt-qemu:kvm /var/lib/libvirt/images/iso/bcm11-arm64.iso
-sha256sum /var/lib/libvirt/images/iso/bcm11-arm64.iso   <span class="c"># compare with the portal</span></code></pre>
+ls -lh /var/lib/libvirt/images/iso/</code></pre>
+
+<h3>Verify the checksum and the architecture</h3>
+<p>The checksum proves the file arrived intact; the second check proves it is the Arm build. The ISO's own <code>EFI</code> folder isn't the one the firmware boots from — installer ISOs boot from the small <code>efi.img</code> embedded in them, so look inside that.</p>
+<pre><code>ISO=/var/lib/libvirt/images/iso/bcm11-arm64.iso
+sha256sum "$ISO"                     <span class="c"># compare with the download portal</span>
+
+sudo umount /mnt 2&gt;/dev/null         <span class="c"># clear any stale mount first</span>
+sudo mount -o loop,ro "$ISO" /mnt
+sudo mkdir -p /tmp/efiimg
+sudo mount -o loop,ro /mnt/efi.img /tmp/efiimg
+find /tmp/efiimg -type f -iname "*.efi" | xargs -r file
+sudo umount /tmp/efiimg; sudo umount /mnt</code></pre>
+<p>You want <code>BOOTAA64.EFI</code> or <code>bootaa64.efi</code> described as <code>Aarch64</code>. <code>bootx64.efi</code> or <code>x86-64</code> means the x86 edition: download the aarch64 one before going further.</p>
 <div class="note">
 <strong>Licensing.</strong>
 <p>You need a BCM product key both to download and to activate the cluster in step 8. NVIDIA has offered no-cost BCM licensing in the past; check the current terms on the download portal or with your NVIDIA contact.</p>
 </div>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym"><code>mount</code> says “already mounted”</p>
+<p>An earlier mount is still active, and it may be of an older file with the same name — its contents can mislead you. Unmount until it says “not mounted”, then mount again.</p><pre><code>mount | grep /mnt
+sudo umount /mnt; sudo umount /mnt</code></pre>
+</div>
+<div class="dx">
+<p class="sym"><code>ls /mnt/EFI/BOOT</code> fails or <code>find</code> shows no <code>.efi</code> files in the ISO</p>
+<p>Expected on BCM ISOs: folder names may be lowercase (<code>EFI/boot</code>), and the boot loader lives inside <code>/mnt/efi.img</code>. Use the <code>efi.img</code> check above.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>file /mnt/boot/vmlinuz*</code> finds nothing</p>
+<p>The installer kernel has a different name. Let <code>file</code> identify everything instead:</p><pre><code>find /mnt/boot /mnt/EFI -type f | head -40 | xargs -r file</code></pre>
+</div>
+<div class="dx">
+<p class="sym">You're not sure which ISO file is which</p>
+<pre><code>sudo find / -xdev -iname "*bcm*.iso" -exec ls -lh {} \; 2&gt;/dev/null</code></pre><p>Check each one's <code>efi.img</code>, then rename them to include the architecture, for example <code>…-x86_64.iso</code> and <code>…-arm64.iso</code>.</p>
+</div>
+<div class="dx">
+<p class="sym">Checksum doesn't match the portal</p>
+<p>Compare with the checksum from the machine you downloaded on (<code>Get-FileHash</code> or <code>shasum</code>). If that one matches the portal, the copy to the Spark was damaged — copy again. If neither matches, download again. If the portal lists MD5, use <code>md5sum</code>.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>mount</code> fails with “wrong fs type” or “can't read superblock”</p>
+<p>The file is incomplete. <code>ls -lh</code> it and compare with the size on the portal, then fetch it again (<code>wget -c</code> resumes).</p>
+</div>
+</details>
 </section>
 
 <section id="s6">
 <h2 class="bcm"><span class="n">6</span>Create the head node VM</h2>
 <p class="touches">Touches: a new VM inside machine.slice.</p>
-<p>Fixed MAC addresses make the NICs easy to recognise in the installer. Disks use virtio-SCSI so they appear as <code>/dev/sda</code>, which BCM's default disk layouts expect.</p>
+<p>Three choices in this command matter:</p>
+<ul class="plain">
+  <li><strong>Firmware without Secure Boot.</strong> Plain <code>--boot uefi</code> makes libvirt pick the Secure Boot firmware (<code>AAVMF_CODE.ms.fd</code>), which silently refuses to run the BCM boot loader: selecting the CD-ROM just returns to the menu. The <code>loader=</code> and <code>nvram.template=</code> options name the plain firmware instead.</li>
+  <li><strong>CD-ROM first, then disk.</strong> The VM boots straight into the installer; once BCM is installed and the ISO is ejected (step 7), it falls through to the disk.</li>
+  <li><strong>Fixed MAC addresses and SCSI disks.</strong> The MACs make NICs easy to match in the installer, and virtio-SCSI disks appear as <code>/dev/sda</code>, which BCM's default disk layouts expect.</li>
+</ul>
+<div class="tbl"><table>
+<thead><tr><th>MAC</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>52:54:00:bc:00:01</code></td><td>head node, external network</td></tr>
+<tr><td><code>52:54:00:bc:01:01</code></td><td>head node, internal network</td></tr>
+<tr><td><code>52:54:00:bc:01:11</code> / <code>:12</code></td><td>node001 / node002, internal network</td></tr>
+</tbody></table></div>
+<p><code>52:54:00</code> is the standard prefix for QEMU/KVM virtual NICs and marks the address as software-assigned, so it can't clash with real hardware. The last three bytes are just a naming scheme (<code>bc</code> = BCM, then network, then machine); any values work as long as each is unique and the same MAC is used here, in the DHCP reservation and in <code>cmsh</code>.</p>
 <pre><code>sudo virt-install \
   --name bcm-head \
   --osinfo ubuntu24.04 \
   --arch aarch64 --machine virt \
-  --boot uefi \
+  --boot cdrom,hd,loader=/usr/share/AAVMF/AAVMF_CODE.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/AAVMF/AAVMF_VARS.fd \
   --cpu host-passthrough \
   --vcpus 4,cpuset=4,10-14 \
   --memory 20480 \
@@ -550,23 +746,99 @@ sha256sum /var/lib/libvirt/images/iso/bcm11-arm64.iso   <span class="c"># compar
   --noautoconsole</code></pre>
 
 <h3>Open the console</h3>
-<pre><code><span class="c"># On the Spark desktop</span>
-virt-viewer --connect qemu:///system bcm-head
+<p>The VM's screen is a VNC display that listens only on the Spark itself (<code>127.0.0.1</code>), so nothing is exposed on your network. There are three ways to see it.</p>
+<h4 style="margin:18px 0 6px">On the Spark's own desktop</h4>
+<pre><code>virt-viewer --connect qemu:///system bcm-head</code></pre>
+<h4 style="margin:18px 0 6px">From a Mac or Windows PC: VNC through an SSH tunnel (recommended)</h4>
+<p>No virt-manager needed. Open the tunnel, then point any VNC viewer at <code>localhost:5901</code>. Local port 5901 avoids clashing with the Mac's own Screen Sharing.</p>
+<pre><code><span class="c"># 1. On the Spark: which VNC display is the VM on?</span>
+sudo virsh vncdisplay bcm-head          <span class="c"># 127.0.0.1:0 → port 5900, :1 → 5901, ...</span>
 
-<span class="c"># Or from a Linux/macOS machine on your home LAN with virt-manager installed</span>
-virt-manager -c qemu+ssh://&lt;spark-user&gt;@192.168.0.50/system</code></pre>
-<p>The graphical console streams over Wi-Fi when used remotely, so it can feel sluggish; the text installer over <code>virsh console</code> in an SSH session is lighter. A blank screen at boot usually means the VM has no display device the firmware likes; see <a href="#trouble">troubleshooting</a>. The ISO's boot menu also offers a text installer, which works over the serial console with <code>virsh console bcm-head</code>.</p>
-
+<span class="c"># 2. On your Mac/PC: tunnel a local port to it (leave this window open)</span>
+ssh -N -o ServerAliveInterval=30 -L 5901:127.0.0.1:5900 &lt;spark-user&gt;@192.168.0.50</code></pre>
+<p>In a second Terminal tab (<kbd>Cmd</kbd>+<kbd>T</kbd>), install a viewer if you don't have one, then open it and connect to <code>localhost:5901</code>. macOS's built-in Screen Sharing often refuses QEMU's password-less VNC, so use a standalone viewer. On Windows, use TigerVNC or RealVNC Viewer with the same tunnel from PowerShell.</p>
+<pre><code>brew install --cask tigervnc-viewer     <span class="c"># Mac, one time (or RealVNC Viewer / TigerVNC from their sites)</span></code></pre>
+<p>Click inside the viewer window before typing so it has keyboard focus.</p>
+<h4 style="margin:18px 0 6px">Serial console (text only)</h4>
+<pre><code>sudo virsh console bcm-head --escape '^Q'   <span class="c"># Control+Q to leave</span></code></pre>
+<p>Useful when the graphical display stays blank; some boot menus appear here instead. The default escape key is <kbd>Control</kbd>+<kbd>]</kbd>; <code>--escape '^Q'</code> changes it to <kbd>Control</kbd>+<kbd>Q</kbd>, which is easier on non-US keyboards.</p>
 <h3>Confirm it is fenced</h3>
 <pre><code>systemd-cgls -u machine.slice | head
 virsh vcpupin bcm-head         <span class="c"># every vCPU should show 4,10-14</span>
 systemd-cgtop -1 machine.slice</code></pre>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym">VNC viewer: “Connection refused” on <code>localhost:5901</code></p>
+<p>Nothing is listening on your machine: the SSH tunnel has closed (sleep, Wi-Fi blip, or the window was closed). Start the tunnel again; the VM is unaffected. If the tunnel is up, check the VM is running and the display number matches the port in the tunnel.</p><pre><code>sudo virsh list --all
+sudo virsh vncdisplay bcm-head</code></pre>
+</div>
+<div class="dx">
+<p class="sym">You type but nothing appears on the VM's screen</p>
+<p>The viewer doesn't have keyboard focus. Click inside it, or close and reopen the viewer; the tunnel can stay up.</p>
+</div>
+<div class="dx">
+<p class="sym">Black screen</p>
+<p>Press a key first — the VM may be idle at a menu. If it stays black, switch to the <code>ramfb</code> display, which works from power-on on Arm VMs:</p><pre><code>sudo virsh destroy bcm-head
+sudo virt-xml bcm-head --edit --video model.type=ramfb
+sudo virsh start bcm-head</code></pre>
+</div>
+<div class="dx">
+<p class="sym">Firmware Boot Manager lists no CD-ROM, only HARDDISK, EFI Internal Shell and PXE/HTTP entries</p>
+<p>No ISO is attached. Check, then insert or add one:</p><pre><code>sudo virsh domblklist bcm-head --details
+
+<span class="c"># cdrom line with '-' as source: insert the ISO</span>
+sudo virsh change-media bcm-head sdb /var/lib/libvirt/images/iso/bcm11-arm64.iso --insert --config
+
+<span class="c"># no cdrom line at all: add a drive</span>
+sudo virt-xml bcm-head --add-device \
+  --disk /var/lib/libvirt/images/iso/bcm11-arm64.iso,device=cdrom,bus=scsi,readonly=on</code></pre>
+</div>
+<div class="dx">
+<p class="sym">Selecting the CD-ROM does nothing and returns to the menu</p>
+<p>Either the ISO is the x86 edition or Secure Boot is on. Check which file is attached, then check the firmware:</p><pre><code>sudo virsh domblklist bcm-head --details          <span class="c"># is it the file you verified in step 5?</span>
+sudo virsh dumpxml bcm-head | grep -iE "loader|nvram|secure"</code></pre><p>Wrong file: swap it with <code>sudo virsh change-media bcm-head sdb &lt;arm64.iso&gt; --update --config</code>. Secure Boot on (<code>secure-boot</code> enabled, or <code>.ms.fd</code> files): see the next item.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>dumpxml</code> shows <code>name='secure-boot'</code> enabled or <code>AAVMF_CODE.ms.fd</code></p>
+<p>The VM was created with plain <code>--boot uefi</code>. Switch the existing VM to the plain firmware and put the CD-ROM first. Removing the <code>firmware='efi'</code> attribute and <code>&lt;firmware&gt;</code> block matters: without that, <code>virsh define</code> fails with “Unable to find 'efi' firmware that is compatible with the current configuration”.</p><pre><code>sudo virsh destroy bcm-head
+sudo virsh dumpxml --inactive bcm-head &gt; ~/bcm-head.xml
+sed -i \
+  -e "s/ firmware='efi'//" \
+  -e "/&lt;firmware&gt;/,/&lt;\/firmware&gt;/d" \
+  -e "s#AAVMF_CODE.ms.fd#AAVMF_CODE.fd#" \
+  -e "s#AAVMF_VARS.ms.fd#AAVMF_VARS.fd#" \
+  -e "s#&lt;boot dev='hd'/&gt;#&lt;boot dev='cdrom'/&gt;\n    &lt;boot dev='hd'/&gt;#" \
+  ~/bcm-head.xml
+grep -A6 "&lt;os" ~/bcm-head.xml        <span class="c"># plain AAVMF files, no &lt;firmware&gt; block</span>
+sudo rm -f /var/lib/libvirt/qemu/nvram/bcm-head_VARS.fd
+sudo virsh define ~/bcm-head.xml
+sudo virsh start bcm-head</code></pre>
+</div>
+<div class="dx">
+<p class="sym">VM lands at the UEFI <code>Shell&gt;</code> prompt</p>
+<p>The firmware didn't boot the CD automatically. <code>FS0</code> on a <code>CDROM</code> path is the ISO's boot image. Start the boot loader by hand:</p><pre><code>fs0:
+ls \EFI\BOOT
+\EFI\BOOT\bootaa64.efi</code></pre><p>If <code>ls</code> shows only <code>bootx64.efi</code> and running it gives “Command Error Status: Unsupported”, the attached ISO is the x86 edition — swap it as above.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>virt-install</code> fails: “domain 'bcm-head' already exists”</p>
+<p>Change the existing VM (as above) rather than creating it again. To start over completely, remove it first; this also deletes an attached ISO unless you eject it.</p><pre><code>sudo virsh change-media bcm-head sdb --eject --config 2&gt;/dev/null
+sudo virsh destroy bcm-head 2&gt;/dev/null
+sudo virsh undefine bcm-head --nvram --remove-all-storage</code></pre>
+</div>
+<div class="dx">
+<p class="sym">Leaving the serial console</p>
+<p><kbd>Control</kbd>+<kbd>]</kbd>; on some non-US layouts <kbd>Control</kbd>+<kbd>5</kbd>. Or close the tab — the VM keeps running.</p>
+</div>
+</details>
 </section>
 
 <section id="s7">
 <h2 class="bcm"><span class="n">7</span>Run the BCM installer</h2>
 <p class="touches">Touches: inside bcm-head only.</p>
-<p>At the ISO boot menu choose <strong>Start Base Command Manager Graphical Installer</strong>. Screen order varies slightly between releases; these are the values that matter.</p>
+<p>At the ISO boot menu choose <strong>Start Base Command Manager Graphical Installer</strong>. If the VM lands at a <code>Shell&gt;</code> prompt instead, start the boot loader by hand with <code>fs0:</code> and then <code>\EFI\BOOT\bootaa64.efi</code>. Screen order varies slightly between releases; these are the values that matter.</p>
 <div class="tbl"><table>
 <thead><tr><th>Installer screen</th><th>Value for this lab</th></tr></thead>
 <tbody>
@@ -587,8 +859,30 @@ systemd-cgtop -1 machine.slice</code></pre>
 </tbody></table></div>
 <p>Review the summary, start the install, and let it reboot. Installation on the efficiency cores takes roughly 20-40 minutes.</p>
 <h3>Detach the ISO after the first boot</h3>
-<pre><code>sudo virsh domblklist bcm-head          <span class="c"># find the CD-ROM target, e.g. sdb</span>
+<pre><code>sudo virsh domblklist bcm-head --details   <span class="c"># find the CD-ROM target, e.g. sdb</span>
 sudo virsh change-media bcm-head sdb --eject --config</code></pre>
+<p>With the ISO ejected, the CD-first boot order falls through to the disk, so the head node boots its installed system from now on.</p>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym">The installer lists only one NIC, or the disk is missing</p>
+<pre><code>sudo virsh domiflist bcm-head     <span class="c"># two interfaces: default and bcm-internal</span>
+sudo virsh domblklist bcm-head --details</code></pre>
+</div>
+<div class="dx">
+<p class="sym">Interface names confuse you in the network screens</p>
+<p>Match by MAC, never by name: <code>…:bc:00:01</code> is external, <code>…:bc:01:01</code> is internal. A swapped mapping puts BCM's DHCP server on the NAT network and leaves the nodes with nothing.</p>
+</div>
+<div class="dx">
+<p class="sym">After the install reboots, the installer starts again</p>
+<p>The ISO is still first in the boot order. Eject it (above) and reset the VM with <code>sudo virsh reset bcm-head</code>.</p>
+</div>
+<div class="dx">
+<p class="sym">Installation stalls or fails partway</p>
+<p>Watch the serial console (<code>sudo virsh console bcm-head --escape '^Q'</code>) for errors, and check the Spark isn't short on memory or disk: <code>free -g</code>, <code>df -h /var/lib</code>. A truncated ISO often fails here too — re-check its checksum.</p>
+</div>
+</details>
 </section>
 
 <section id="s8">
@@ -628,6 +922,29 @@ ssh -N bcm-base-view
 <span class="c"># Option B: no tunnel needed</span>
 <span class="c"># → https://192.168.0.50:8081/base-view</span>
 <span class="c"># Log in as root. Accept the self-signed certificate warning.</span></code></pre>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym"><code>request-license</code> can't connect</p>
+<pre><code>ping -c2 192.168.122.1        <span class="c"># from bcm-head: gateway</span>
+ping -c2 8.8.8.8
+getent hosts www.nvidia.com
+cat /etc/resolv.conf           <span class="c"># nameserver 192.168.122.1</span></code></pre>
+</div>
+<div class="dx">
+<p class="sym">Base View doesn't load</p>
+<p>Work outward from the head node:</p><pre><code><span class="c"># on bcm-head</span>
+ss -tlnp | grep 8081
+<span class="c"># on the Spark</span>
+curl -k https://192.168.122.10:8081/base-view | head -5</code></pre><p>If the Spark gets HTML, the problem is the tunnel or forward; if it doesn't, check BCM's firewall (<code>/etc/shorewall/rules</code>) allows 8081. Use <code>https://</code>, and accept the self-signed certificate.</p>
+</div>
+<div class="dx">
+<p class="sym">SSH warns “REMOTE HOST IDENTIFICATION HAS CHANGED” after a reinstall</p>
+<pre><code>ssh-keygen -R 192.168.122.10
+ssh-keygen -R bcm-head</code></pre>
+</div>
+</details>
 </section>
 
 <section id="s9">
@@ -648,14 +965,14 @@ commit
 quit</code></pre>
 
 <h3>Create the VMs on the Spark</h3>
-<p>Nodes attach only to <code>bcm-internal</code> and boot from the network first. The disk is second in the boot order, so a reinstall is always one reboot away.</p>
+<p>Nodes attach only to <code>bcm-internal</code> and boot from the network first. The disk is second in the boot order, so a reinstall is always one reboot away. They use the same non-Secure-Boot firmware as the head node; with Secure Boot on, the firmware would refuse BCM's network boot loader in exactly the same silent way.</p>
 <pre><code>for i in 1 2; do
   n=$(printf "%03d" $i)
   sudo virt-install \
     --name bcm-node$n \
     --osinfo ubuntu24.04 \
     --arch aarch64 --machine virt \
-    --boot uefi \
+    --boot loader=/usr/share/AAVMF/AAVMF_CODE.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/AAVMF/AAVMF_VARS.fd \
     --cpu host-passthrough \
     --vcpus 2,cpuset=4,10-14 \
     --memory 4096 \
@@ -683,6 +1000,29 @@ ssh node001 hostname</code></pre>
 
 sinfo
 srun -N2 hostname</code></pre>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym">A node's screen shows PXE attempts but no DHCP offer</p>
+<pre><code><span class="c"># on bcm-head, while the node boots</span>
+journalctl -u dhcpd -f
+cmsh -c "device use node001; get mac"</code></pre><p>The MAC must match the node's NIC exactly (<code>sudo virsh domiflist bcm-node001</code>), and the node's NIC must be on <code>bcm-internal</code>.</p>
+</div>
+<div class="dx">
+<p class="sym">The node gets an address but never loads the installer</p>
+<p>Check its firmware: if it was created with plain <code>--boot uefi</code>, Secure Boot blocks BCM's network boot loader just as it blocked the ISO.</p><pre><code>sudo virsh dumpxml bcm-node001 | grep -iE "loader|secure"</code></pre><p>Apply the step 6 Secure Boot fix to the node (skip the CD-ROM boot-order line; nodes boot from the network).</p>
+</div>
+<div class="dx">
+<p class="sym">The node-installer fails on the disk</p>
+<p>The disk isn't at <code>/dev/sda</code>. Keep node disks on the SCSI bus, or change the category's disk setup to use <code>/dev/vda</code>.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>sinfo</code> shows nodes <code>down</code> or <code>drain</code></p>
+<pre><code>scontrol show node node001 | grep -i reason
+scontrol update nodename=node001 state=resume</code></pre>
+</div>
+</details>
 </section>
 
 <section id="s10">
@@ -733,6 +1073,18 @@ quit
 cmsh -c "device power status -n node001..node002"
 cmsh -c "device power reset -n node002"</code></pre>
 <p>Check the argument and status conventions against the "custom power management" section of the BCM Administrator Manual for your release; if they differ, only the <code>case</code> block needs to change.</p>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym"><code>device power status</code> shows UNKNOWN or fails</p>
+<p>Run the same SSH call the script makes, by hand, from bcm-head:</p><pre><code>ssh -o BatchMode=yes bcmpower@192.168.122.1 virsh -c qemu:///system list --all</code></pre><p>A password prompt or “Permission denied” means the key isn't in <code>~bcmpower/.ssh/authorized_keys</code> or that file's permissions are too open (<code>chmod 700 ~/.ssh; chmod 600 authorized_keys</code>).</p>
+</div>
+<div class="dx">
+<p class="sym">The script runs but acts on the wrong VM</p>
+<p>The script builds the VM name as <code>bcm-</code> plus the BCM node name, so <code>node001</code> must map to a VM called <code>bcm-node001</code>. Check with <code>sudo virsh list --all</code>.</p>
+</div>
+</details>
 </section>
 
 <section id="s11">
@@ -775,6 +1127,24 @@ docker stats --no-stream</code></pre>
 <strong>If you need the whole machine.</strong>
 <p>Stop the lab (<code>virsh shutdown</code> the nodes, then the head), raise the framework cap, and run the job. Start the lab again when you're done; BCM resumes where it left off.</p>
 </div>
+
+<details class="diag">
+<summary>Diagnose this step</summary>
+<div class="dx">
+<p class="sym">A container can't see the GPU</p>
+<pre><code>docker run --rm --gpus all nvcr.io/nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi
+nvidia-ctk --version</code></pre>
+</div>
+<div class="dx">
+<p class="sym">Check a container really is on the performance cores</p>
+<pre><code>docker inspect --format '{{.HostConfig.CpusetCpus}}' ollama   <span class="c"># 5-9,15-19</span></code></pre>
+</div>
+<div class="dx">
+<p class="sym">A model load gets killed, or a VM dies</p>
+<pre><code>journalctl -k | grep -iE 'oom|killed process'
+free -g</code></pre><p>Lower the framework's memory fraction or context length, or shut the lab down while that model runs.</p>
+</div>
+</details>
 </section>
 
 <section id="ops">
@@ -822,7 +1192,10 @@ virsh -c qemu:///system dumpxml bcm-head | sudo tee $B/bcm-head.xml &gt;/dev/nul
 </div>
 
 <h3>1. Delete the VMs and their disks</h3>
-<pre><code>for d in bcm-node002 bcm-node001 bcm-head; do
+<pre><code><span class="c"># Eject the ISO first so --remove-all-storage doesn't delete it</span>
+sudo virsh change-media bcm-head sdb --eject --config 2&gt;/dev/null
+
+for d in bcm-node002 bcm-node001 bcm-head; do
   sudo virsh destroy "$d" 2&gt;/dev/null      <span class="c"># force off if running</span>
   sudo virsh undefine "$d" --nvram --remove-all-storage
 done
@@ -830,7 +1203,7 @@ done
 sudo virsh list --all                      <span class="c"># no bcm-* entries left</span>
 ls /var/lib/libvirt/images/                <span class="c"># no bcm-*.qcow2 left</span>
 ls /var/lib/libvirt/qemu/nvram/ | grep bcm <span class="c"># no UEFI variable stores left</span></code></pre>
-<p><code>--remove-all-storage</code> also deletes any disk still attached to the VM, including the ISO if it wasn't ejected in step 7. The ISO is removed separately below either way.</p>
+<p><code>--remove-all-storage</code> deletes every disk still attached to the VM, including an ISO that was never ejected, which is why the loop starts with an eject. Delete the ISO separately in step 6 below if you don't want it.</p>
 
 <h3>2. Remove the lab networks</h3>
 <pre><code>sudo virsh net-destroy bcm-internal
@@ -908,6 +1281,22 @@ df -h /var/lib                             <span class="c"># disk space recovere
 <strong>Licence reuse.</strong>
 <p>BCM licences are issued to a specific head node. If you plan to rebuild the lab later with the same product key, check with NVIDIA whether it needs to be reissued before you run <code>request-license</code> on the new head node.</p>
 </div>
+
+<details class="diag">
+<summary>Diagnose teardown</summary>
+<div class="dx">
+<p class="sym"><code>undefine</code> fails: “cannot undefine domain with nvram”</p>
+<p>Include <code>--nvram</code>, as in the loop above.</p>
+</div>
+<div class="dx">
+<p class="sym"><code>net-destroy default</code> fails because it's in use</p>
+<p>Another VM still uses it. Check <code>sudo virsh list --all</code>; keep <code>default</code> if you run other VMs.</p>
+</div>
+<div class="dx">
+<p class="sym">You deleted the ISO by accident</p>
+<p>Download it again on the Spark with <code>wget</code> (step 5) — the portal lets you re-download with the same product key.</p>
+</div>
+</details>
 </section>
 
 <section id="trouble">
@@ -916,7 +1305,7 @@ df -h /var/lib                             <span class="c"># disk space recovere
 <div class="tbl"><table>
 <thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
 <tbody>
-<tr><td>VM starts but the screen is black or it never reaches the ISO menu</td><td>Firmware or display mismatch. Confirm <code>--boot uefi</code> picked AAVMF (<code>virsh dumpxml bcm-head | grep -i loader</code>). Try <code>--video ramfb</code>, or use the text installer over <code>virsh console</code>.</td></tr>
+<tr><td>VM starts but the screen is black or it never reaches the ISO menu</td><td>Firmware or display mismatch. Confirm the loader is the plain <code>AAVMF_CODE.fd</code> (<code>virsh dumpxml bcm-head | grep -i loader</code>). Try <code>--video ramfb</code>, or use the text installer over <code>virsh console</code>.</td></tr>
 <tr><td>Mouse cursor doesn't track in the console</td><td>Add a USB tablet input device (<code>--input tablet,bus=usb</code>, already in the commands above).</td></tr>
 <tr><td>Node stays at UEFI with no DHCP offer</td><td>Check the node NIC is on <code>bcm-internal</code>, its MAC matches the value set in cmsh, and the head's internal NIC is mapped to internalnet. On the head: <code>journalctl -u dhcpd -f</code> while the node boots.</td></tr>
 <tr><td>Node gets an address but the node-installer fails on disk</td><td>The disk isn't where the layout expects it. Confirm the node disk is on the SCSI bus (<code>/dev/sda</code>), or edit the category's disk setup to include <code>/dev/vda</code>.</td></tr>
@@ -926,6 +1315,13 @@ df -h /var/lib                             <span class="c"># disk space recovere
 <tr><td>Can't reach 192.168.0.50:2222 or :8081 from another LAN device</td><td>On the Spark: <code>systemctl status bcm-fwd@2222</code> and <code>ss -tlnp | grep 2222</code>. Check the address in <code>/etc/default/bcm-fwd-*</code> still matches <code>ip -4 addr show wlP9s9</code>, and that UFW allows 192.168.0.0/24. Some routers enable "AP/client isolation" on guest Wi-Fi, which blocks device-to-device traffic; use the main SSID.</td></tr>
 <tr><td>The forwards stopped working after a reboot</td><td>The Spark's Wi-Fi address changed. Add a DHCP reservation on the router or set the address statically (step 1), then update <code>LISTEN=</code> and restart the services.</td></tr>
 <tr><td>SSH sessions into the lab freeze or drop</td><td>Wi-Fi power saving is still on (<code>iw dev wlP9s9 get power_save</code>). Also add <code>ServerAliveInterval 30</code> under <code>Host *</code> in <code>~/.ssh/config</code> on the LAN machine.</td></tr>
+<tr><td>Boot Manager shows no CD-ROM entry</td><td>No ISO attached. <code>sudo virsh domblklist bcm-head --details</code>, then insert or add the ISO (step 6 diagnostics).</td></tr>
+<tr><td>Selecting the CD-ROM does nothing</td><td>Wrong-architecture ISO or Secure Boot firmware. Check the attached file and <code>virsh dumpxml bcm-head | grep -iE "loader|secure"</code>.</td></tr>
+<tr><td>UEFI shell: “Command Error Status: Unsupported”</td><td>The boot file is <code>bootx64.efi</code>: the attached ISO is x86. Attach the aarch64 ISO with <code>virsh change-media … --update --config</code>.</td></tr>
+<tr><td><code>virsh define</code>: “Unable to find 'efi' firmware that is compatible”</td><td>Remove <code>firmware='efi'</code> and the <code>&lt;firmware&gt;</code> block when naming the plain AAVMF files explicitly.</td></tr>
+<tr><td>VNC viewer: “Connection refused” on localhost:5901</td><td>The SSH tunnel closed. Start it again; check <code>virsh vncdisplay bcm-head</code> matches the tunnel's port.</td></tr>
+<tr><td>ISO mount: “already mounted”</td><td>A stale mount, possibly of an older file. <code>sudo umount /mnt</code> until “not mounted”, then remount.</td></tr>
+<tr><td><code>virt-host-validate</code>: WARN on cgroup 'devices' controller</td><td>Harmless on cgroup v2. Make sure <code>cpuset</code> and <code>memory</code> are in <code>/sys/fs/cgroup/cgroup.controllers</code>.</td></tr>
 <tr><td>Things broke after a DGX OS update</td><td>A new kernel may reset kvm or cgroup behaviour. Recheck <code>/dev/kvm</code>, <code>systemctl show machine.slice</code> and <code>virt-host-validate</code>.</td></tr>
 </tbody></table></div>
 </section>

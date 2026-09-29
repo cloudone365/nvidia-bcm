@@ -13,6 +13,13 @@ The BCM head node and PXE-provisioned compute nodes run in an isolated CPU and m
 
 Both guides cover the architecture and resource budget, KVM/libvirt setup, the isolation boundary, BCM head node installation and licensing, compute node provisioning, optional BCM power control through `virsh`, running LLMs alongside the lab, day-2 operations, full teardown and troubleshooting.
 
+Every step ends with a **Diagnose this step** panel built from a real install. The issues that most often stop a first install are covered there:
+
+- **Secure Boot firmware.** `virt-install --boot uefi` picks firmware that silently refuses the BCM boot loader. The guides name the plain AAVMF firmware explicitly and show how to fix an existing VM.
+- **Wrong-architecture ISO.** The x86 and aarch64 ISOs have near-identical names. Step 5 checks the embedded `efi.img` for `bootaa64.efi` before any VM is created.
+- **Console access without virt-manager.** Step 6 reaches the VM's screen from a Mac or Windows PC through an SSH tunnel and any VNC viewer.
+- **CPU layout.** On the GB10 the efficiency cores are 0–4 and 10–14 and the performance cores are 5–9 and 15–19, not two contiguous blocks.
+
 ## Reading the guides
 
 GitHub shows `.html` files as source. Download a file and open it in a browser, or enable GitHub Pages for this repository.
