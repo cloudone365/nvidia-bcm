@@ -20,6 +20,8 @@ Every step ends with a **Diagnose this step** panel built from a real install. T
 - **Secure Boot firmware.** `virt-install --boot uefi` picks firmware that silently refuses the BCM boot loader. The guides name the plain AAVMF firmware explicitly and show how to fix an existing VM.
 - **Wrong-architecture ISO.** The x86 and aarch64 ISOs have near-identical names. Step 5 checks the embedded `efi.img` for `bootaa64.efi` before any VM is created.
 - **Console access without virt-manager.** Step 6 reaches the VM's screen from a Mac or Windows PC through an SSH tunnel and any VNC viewer.
+- **Verification.** Every step ends with **Verify this step**: the commands to run and the output to expect, including a full ISO check (size, checksum, readability, architecture, and which file the VM actually uses).
+- **Head node interfaces.** The installer can map `enp1s0`/`enp2s0` the wrong way round; step 7 shows how to confirm with the PCI bus, and step 8 verifies the result inside the head node.
 - **CPU layout.** On the GB10 the efficiency cores are 0–4 and 10–14 and the performance cores are 5–9 and 15–19, not two contiguous blocks.
 
 ## Reading the guides

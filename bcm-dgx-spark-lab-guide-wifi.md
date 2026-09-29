@@ -164,6 +164,54 @@ ip -4 route                         # 192.168.0.0/24 dev wlP9s9 … confirms the
 
 The wired 10 GbE port and the two ConnectX-7 QSFP ports are not used by this lab.
 
+### Verify this step
+
+KVM is available, and the CPU and memory are what the budget assumes:
+
+```bash
+ls -l /dev/kvm
+nproc
+free -g | awk '/Mem:/{print $2" GB total"}'
+```
+
+**Expected output**
+
+```text
+crw-rw---- 1 root kvm 10, 232 Sep 29 08:00 /dev/kvm
+20
+119 GB total
+```
+
+Core types match the split used in this guide:
+
+```bash
+grep 'CPU part' /proc/cpuinfo | awk '{print $4}' | paste -sd' '
+```
+
+**Expected output**
+
+```text
+0xd87 0xd87 0xd87 0xd87 0xd87 0xd85 0xd85 0xd85 0xd85 0xd85 0xd87 0xd87 0xd87 0xd87 0xd87 0xd85 0xd85 0xd85 0xd85 0xd85
+```
+
+Positions 0–4 and 10–14 are `0xd87` (efficiency); 5–9 and 15–19 are `0xd85` (performance).
+
+The Wi-Fi uplink is up, on your LAN, with power saving off:
+
+```bash
+ip -4 -br addr show wlP9s9
+ip route | grep default
+iw dev wlP9s9 get power_save
+```
+
+**Expected output**
+
+```text
+wlP9s9   UP   192.168.0.50/24
+default via 192.168.0.1 dev wlP9s9 proto static metric 600
+	Power save: off
+```
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
@@ -253,6 +301,64 @@ If `default` is missing from the list entirely, recreate it from the copy libvir
 sudo virsh net-define /usr/share/libvirt/networks/default.xml
 ```
 
+### Verify this step
+
+libvirt and QEMU are installed and answering:
+
+```bash
+virsh -c qemu:///system version
+```
+
+**Expected output**
+
+```text
+Compiled against library: libvirt 10.0.0
+Using library: libvirt 10.0.0
+Using API: QEMU 10.0.0
+Running hypervisor: QEMU 8.2.2
+```
+
+Version numbers may be newer after updates; the point is that all four lines appear.
+
+Your user is in the right groups (after logging out and back in):
+
+```bash
+id -nG | tr ' ' '\n' | grep -E '^(libvirt|kvm)$'
+```
+
+**Expected output**
+
+```text
+kvm
+libvirt
+```
+
+The plain (non-Secure-Boot) firmware exists:
+
+```bash
+ls /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/AAVMF/AAVMF_VARS.fd
+```
+
+**Expected output**
+
+```text
+/usr/share/AAVMF/AAVMF_CODE.fd  /usr/share/AAVMF/AAVMF_VARS.fd
+```
+
+The NAT network is running and starts at boot:
+
+```bash
+sudo virsh net-list --all
+```
+
+**Expected output**
+
+```text
+ Name      State    Autostart   Persistent
+--------------------------------------------
+ default   active   yes         yes
+```
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
@@ -337,6 +443,39 @@ Each VM will also be created with locked memory (step 6), so its RAM is committe
 > **Optional: turn off page merging.**
 >
 > If `cat /sys/kernel/mm/ksm/run` prints 1, set it to 0. Merging pages across VMs saves little in a two-node lab and adds CPU churn on the host cores.
+
+### Verify this step
+
+Each slice has the limits you set:
+
+```bash
+systemctl show machine.slice -p AllowedCPUs -p MemoryMax
+systemctl show system.slice  -p AllowedCPUs
+systemctl show user.slice    -p AllowedCPUs
+```
+
+**Expected output**
+
+```text
+AllowedCPUs=4,10-14
+MemoryMax=36507222016
+AllowedCPUs=0-3,5-9,15-19
+AllowedCPUs=0-3,5-9,15-19
+```
+
+`MemoryMax` is shown in bytes: 36507222016 = 34 GiB.
+
+The OOM hook is installed and executable:
+
+```bash
+ls -l /etc/libvirt/hooks/qemu
+```
+
+**Expected output**
+
+```text
+-rwxr-xr-x 1 root root 213 Sep 29 08:10 /etc/libvirt/hooks/qemu
+```
 
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
@@ -511,6 +650,62 @@ sudo ufw allow from 192.168.0.0/24 to any port 2222,8081 proto tcp
 >
 > Binding to 192.168.0.50 keeps the forwards off every other interface. Don't create router port forwards for 2222 or 8081: the head node's root login would then be reachable from the internet. Use key-based SSH on the head node and disable root password login once you've copied your key over.
 
+### Verify this step
+
+Both lab networks are active and autostart:
+
+```bash
+sudo virsh net-list --all
+```
+
+**Expected output**
+
+```text
+ Name           State    Autostart   Persistent
+--------------------------------------------------
+ bcm-internal   active   yes         yes
+ default        active   yes         yes
+```
+
+The internal network has no IP, DHCP or forwarding, and the host has no address on it:
+
+```bash
+sudo virsh net-dumpxml bcm-internal | grep -cE '<ip|<forward|<dhcp'
+ip -4 addr show virbr-bcmi | grep -c inet
+```
+
+**Expected output**
+
+```text
+0
+0
+```
+
+The head node's address is reserved on the NAT network:
+
+```bash
+sudo virsh net-dumpxml default | grep bcm-head
+```
+
+**Expected output**
+
+```text
+      <host mac='52:54:00:bc:00:01' name='bcm-head' ip='192.168.122.10'/>
+```
+
+If you set up option B, both forwards listen on the Wi-Fi address:
+
+```bash
+ss -tlnp | grep -E ':2222|:8081'
+```
+
+**Expected output**
+
+```text
+LISTEN 0  5  192.168.0.50:2222  0.0.0.0:*  users:(("socat",pid=1234,fd=5))
+LISTEN 0  5  192.168.0.50:8081  0.0.0.0:*  users:(("socat",pid=1235,fd=5))
+```
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
@@ -631,12 +826,55 @@ find /tmp/efiimg -type f -iname "*.efi" | xargs -r file
 sudo umount /tmp/efiimg; sudo umount /mnt
 ```
 
+**Expected output** (checksum and size will differ by release)
+
+```text
+<64-character hex checksum>  /var/lib/libvirt/images/iso/bcm11-arm64.iso
+/tmp/efiimg/EFI/BOOT/bootaa64.efi: PE32+ executable (EFI application) Aarch64 (stripped to external PDB), for MS Windows, 4 sections
+```
+
+For comparison, the x86 edition shows `bootx64.efi: PE32+ executable (EFI application) x86-64`. While the ISO is mounted, `ls /mnt` on a BCM 11 Arm ISO looks like this:
+
+```text
+3rd-party-licenses.pdf  boot  boot.catalog  BRIGHTDATA.md5  data  EFI  efi.img  grub  OSS-Written-Offer.pdf  README.ADDON  README.BRIGHTUSB  README.MODIFY.BRIGHTISO.md
+```
+
+Two things in that listing trip people up: the ISO's own `EFI` folder has no `.efi` file near the top, and the kernel isn't called `vmlinuz`. Both are normal — the firmware boots from `efi.img`, which is why the check looks inside it.
+
 You want `BOOTAA64.EFI` or `bootaa64.efi` described as `Aarch64`. `bootx64.efi` or `x86-64` means the x86 edition: download the aarch64 one before going further.
+
+### ISO verification at a glance
+
+| Check | Command | Pass | Fail means |
+|---|---|---|---|
+| Complete download | `ls -lh "$ISO"` | Same size as listed on the portal (several GB) | Truncated transfer: fetch again (`wget -c` resumes) |
+| Intact file | `sha256sum "$ISO"` | Matches the portal's checksum exactly | Corrupted download or copy |
+| Readable ISO | `sudo mount -o loop,ro "$ISO" /mnt` | Mounts without error; `ls /mnt` shows `EFI`, `efi.img`, `boot`, `data`, `grub` | “wrong fs type” / “can't read superblock”: damaged file |
+| Arm build | `find /tmp/efiimg … \| xargs file` | `bootaa64.efi … Aarch64` | `bootx64.efi … x86-64`: x86 edition, won't boot |
+| Right file in the VM | `sudo virsh domblklist bcm-head --details` | The `cdrom` line shows the file you just verified | A different ISO is attached (step 6 diagnostics) |
 
 > [!NOTE]
 > **Licensing.**
 >
 > You need a BCM product key both to download and to activate the cluster in step 8. NVIDIA has offered no-cost BCM licensing in the past; check the current terms on the download portal or with your NVIDIA contact.
+
+### Verify this step
+
+The ISO is in place, owned by the QEMU user:
+
+```bash
+ls -lh /var/lib/libvirt/images/iso/
+```
+
+**Expected output**
+
+```text
+-rw-r--r-- 1 libvirt-qemu kvm 5.1G Sep 29 07:40 bcm11-arm64.iso
+```
+
+The size is illustrative; it must match the portal. There should be no other BCM ISO here unless its name says which architecture it is.
+
+The checksum and architecture checks above, with the table, complete this step.
 
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
@@ -690,15 +928,27 @@ Three choices in this command matter:
 
 - **Firmware without Secure Boot.** Plain `--boot uefi` makes libvirt pick the Secure Boot firmware (`AAVMF_CODE.ms.fd`), which silently refuses to run the BCM boot loader: selecting the CD-ROM just returns to the menu. The `loader=` and `nvram.template=` options name the plain firmware instead.
 - **CD-ROM first, then disk.** The VM boots straight into the installer; once BCM is installed and the ISO is ejected (step 7), it falls through to the disk.
-- **Fixed MAC addresses and SCSI disks.** The MACs make NICs easy to match in the installer, and virtio-SCSI disks appear as `/dev/sda`, which BCM's default disk layouts expect.
+- **Fixed MAC addresses and SCSI disks.** The MACs make NICs easy to match in the installer (explained below), and virtio-SCSI disks appear as `/dev/sda`, which BCM's default disk layouts expect.
 
-| MAC | Meaning |
-|---|---|
-| `52:54:00:bc:00:01` | head node, external network |
-| `52:54:00:bc:01:01` | head node, internal network |
-| `52:54:00:bc:01:11` / `:12` | node001 / node002, internal network |
+### Why the MAC addresses start with 52:54:00:bc
 
-`52:54:00` is the standard prefix for QEMU/KVM virtual NICs and marks the address as software-assigned, so it can't clash with real hardware. The last three bytes are just a naming scheme (`bc` = BCM, then network, then machine); any values work as long as each is unique and the same MAC is used here, in the DHCP reservation and in `cmsh`.
+Every NIC in the lab gets a MAC address chosen by hand instead of a random one. That makes each NIC recognisable at a glance in the BCM installer, in `cmsh`, in DHCP logs and in `virsh` output, and lets the same address appear in four places without looking it up: the `virt-install` command, the libvirt DHCP reservation (step 4), the installer's interface mapping (step 7) and `cmsh set mac` for the nodes (step 9).
+
+| Bytes | Value | Why |
+|---|---|---|
+| 1–3 | `52:54:00` | The prefix QEMU/KVM uses for virtual NICs; libvirt generates `52:54:00:xx:xx:xx` itself when no MAC is given. In the first byte, `0x52` = `0101 0010`: bit 1 set means *locally administered* (assigned by software, never burned into real hardware), and bit 0 clear means *unicast*. So these addresses can never collide with a physical NIC on your network. |
+| 4 | `bc` | “BCM”. A lab-wide tag, so every lab NIC matches one search: `virsh dumpxml … \| grep 52:54:00:bc`. Other VMs you create later keep libvirt's random addresses and never clash. |
+| 5 | `00` / `01` | Which network: `00` = external (libvirt NAT), `01` = internal (BCM provisioning). |
+| 6 | `01`, `11`, `12`… | Which machine: `01` = head node, `11` onwards = node001, node002…, leaving room for a second head node (`02`) if you try HA later. |
+
+| MAC | Machine | Network | Linux name in the VM |
+|---|---|---|---|
+| 🟩 `52:54:00:bc:00:01` | bcm-head | externalnet (libvirt `default`) | `enp1s0` |
+| 🟩 `52:54:00:bc:01:01` | bcm-head | internalnet (`bcm-internal`) | `enp2s0` |
+| 🟩 `52:54:00:bc:01:11` | node001 | internalnet | — |
+| 🟩 `52:54:00:bc:01:12` | node002 | internalnet | — |
+
+Any values work as long as each MAC is unique and used consistently. If you change the scheme, change it everywhere it appears.
 
 ```bash
 sudo virt-install \
@@ -723,41 +973,93 @@ sudo virt-install \
 
 ### Open the console
 
-The VM's screen is a VNC display that listens only on the Spark itself (`127.0.0.1`), so nothing is exposed on your network. There are three ways to see it.
+The VM has a virtual graphics card. QEMU draws that card's screen into memory and publishes it as a **VNC server**; `--graphics vnc,listen=127.0.0.1` makes that server listen only on the Spark itself, on port 5900 for the first VM (display `:0`), 5901 for the next (`:1`) and so on. Anything that shows you the VM's screen is a VNC client of that server. The VM also has a **serial port** wired to a text console, which needs no graphics at all.
 
-#### On the Spark's own desktop
+```text
+VM's virtual GPU (virtio / ramfb) ──► QEMU VNC server 127.0.0.1:5900 on the Spark
+                                            ▲
+            virt-viewer / virt-manager ─────┤  (libvirt clients, find the port for you)
+            TigerVNC via SSH tunnel ────────┘  (plain VNC client, any OS)
+
+VM's serial port ──► virsh console bcm-head   (text only, over any SSH session)
+```
+
+| Tool | Runs on | How it reaches the VM | Use it when |
+|---|---|---|---|
+| **virt-viewer** | The Spark's own desktop | Asks libvirt for the VNC port and connects locally | A monitor is attached to the Spark |
+| **virt-manager** | A Linux desktop (the Spark, or a Linux PC) | Full libvirt GUI; connects over `qemu+ssh://` and opens the VNC console for you | You want a GUI to manage VMs, not just see one. Not practical on macOS or Windows. |
+| **TigerVNC** (or RealVNC) | Mac, Windows or Linux | Plain VNC client; reaches `127.0.0.1:5900` through an SSH tunnel | You work from a Mac or Windows PC — the method used for this lab |
+| **virsh console** | Any SSH session to the Spark | Attaches to the VM's serial port | The screen is blank, you only have a terminal, or a boot menu prints to serial |
+
+#### The VM's display device
+
+`--video virtio` gives the VM a paravirtual GPU that the UEFI firmware and Linux both drive. On some Arm firmware builds the firmware can't draw on it, so the screen stays black until Linux starts; the `ramfb` device works from power-on. If you see a black screen at boot, switch to `ramfb` (see *Diagnose this step*).
+
+#### On the Spark's own desktop: virt-viewer
 
 ```bash
 virt-viewer --connect qemu:///system bcm-head
 ```
 
-#### From a Mac or Windows PC: VNC through an SSH tunnel (recommended)
+#### From a Mac or Windows PC: TigerVNC through an SSH tunnel
 
-No virt-manager needed. Open the tunnel, then point any VNC viewer at `localhost:5901`. Local port 5901 avoids clashing with the Mac's own Screen Sharing.
+virt-manager isn't needed. The tunnel forwards a port on your computer to the VM's VNC port on the Spark, so nothing is exposed on your network. Local port 5901 avoids clashing with the Mac's own Screen Sharing on 5900.
 
 ```bash
 # 1. On the Spark: which VNC display is the VM on?
-sudo virsh vncdisplay bcm-head          # 127.0.0.1:0 → port 5900, :1 → 5901, ...
+sudo virsh vncdisplay bcm-head
+```
 
-# 2. On your Mac/PC: tunnel a local port to it (leave this window open)
+**Expected output**
+
+```text
+127.0.0.1:0
+```
+
+`:0` means port 5900, `:1` port 5901, and so on. Use that port on the right-hand side of the tunnel.
+
+```bash
+# 2. On your Mac/PC, in its own Terminal window (leave it open; it prints nothing)
 ssh -N -o ServerAliveInterval=30 -L 5901:127.0.0.1:5900 <spark-user>@192.168.0.50
 ```
 
-In a second Terminal tab (<kbd>Cmd</kbd>+<kbd>T</kbd>), install a viewer if you don't have one, then open it and connect to `localhost:5901`. macOS's built-in Screen Sharing often refuses QEMU's password-less VNC, so use a standalone viewer. On Windows, use TigerVNC or RealVNC Viewer with the same tunnel from PowerShell.
+In a second Terminal tab (<kbd>Cmd</kbd>+<kbd>T</kbd> on a Mac), install a viewer once, then open it and connect to `localhost:5901`:
 
 ```bash
-brew install --cask tigervnc-viewer     # Mac, one time (or RealVNC Viewer / TigerVNC from their sites)
+brew install --cask tigervnc-viewer     # Mac, one time; or download TigerVNC / RealVNC Viewer
+lsof -nP -iTCP:5901 -sTCP:LISTEN        # Mac: confirms the tunnel is listening
 ```
 
-Click inside the viewer window before typing so it has keyboard focus.
+**Expected output** of the `lsof` check
 
-#### Serial console (text only)
+```text
+COMMAND  PID  USER   FD   TYPE  DEVICE SIZE/OFF NODE NAME
+ssh     4242  you    5u  IPv4  0x...      0t0  TCP 127.0.0.1:5901 (LISTEN)
+```
+
+macOS's built-in Screen Sharing often refuses QEMU's password-less VNC, so use a standalone viewer. On Windows, run the same `ssh -N -L …` command in PowerShell and use TigerVNC or RealVNC Viewer. Click inside the viewer window before typing so it has keyboard focus. If the viewer says *Connection refused*, the tunnel has closed; start it again.
+
+#### Serial console: connect and exit
+
+The VM was created with `--console pty,target_type=serial`, so its first serial port is a text console you can open from any SSH session on the Spark:
 
 ```bash
-sudo virsh console bcm-head --escape '^Q'   # Control+Q to leave
+sudo virsh console bcm-head --escape '^Q'
 ```
 
-Useful when the graphical display stays blank; some boot menus appear here instead. The default escape key is <kbd>Control</kbd>+<kbd>]</kbd>; `--escape '^Q'` changes it to <kbd>Control</kbd>+<kbd>Q</kbd>, which is easier on non-US keyboards.
+**Expected output**
+
+```text
+Connected to domain 'bcm-head'
+Escape character is ^Q (Ctrl + Q)
+```
+
+- **Nothing appears after connecting:** press <kbd>Enter</kbd> once. The console only shows new output; a boot menu or login prompt that was drawn earlier isn't repeated.
+- **Exit:** <kbd>Control</kbd>+<kbd>Q</kbd> with the `--escape '^Q'` option above. Without it, the default is <kbd>Control</kbd>+<kbd>]</kbd>; on some non-US keyboards that key is <kbd>Control</kbd>+<kbd>5</kbd>. Exiting only disconnects you — the VM keeps running.
+- **“Active console session exists for this domain”:** another terminal is still attached. Close it, or take over with `sudo virsh console bcm-head --force`.
+- **Last resort:** close the Terminal tab. The VM is unaffected, and you can reconnect at any time.
+
+Once BCM is installed, the serial console shows the head node's login prompt, which is handy if a network change locks you out of SSH.
 
 ### Confirm it is fenced
 
@@ -766,6 +1068,91 @@ systemd-cgls -u machine.slice | head
 virsh vcpupin bcm-head         # every vCPU should show 4,10-14
 systemd-cgtop -1 machine.slice
 ```
+
+### Verify this step
+
+The VM is running:
+
+```bash
+sudo virsh list --all
+```
+
+**Expected output**
+
+```text
+ Id   Name       State
+--------------------------
+ 1    bcm-head   running
+```
+
+The right ISO and disk are attached:
+
+```bash
+sudo virsh domblklist bcm-head --details
+```
+
+**Expected output**
+
+```text
+ Type   Device   Target   Source
+-------------------------------------------------------------------
+ file   disk     sda      /var/lib/libvirt/images/bcm-head.qcow2
+ file   cdrom    sdb      /var/lib/libvirt/images/iso/bcm11-arm64.iso
+```
+
+Plain firmware, no Secure Boot, CD-ROM first:
+
+```bash
+sudo virsh dumpxml bcm-head | grep -iE "loader|nvram|secure|<boot"
+```
+
+**Expected output**
+
+```text
+    <loader readonly='yes' type='pflash'>/usr/share/AAVMF/AAVMF_CODE.fd</loader>
+    <nvram template='/usr/share/AAVMF/AAVMF_VARS.fd'>/var/lib/libvirt/qemu/nvram/bcm-head_VARS.fd</nvram>
+    <boot dev='cdrom'/>
+    <boot dev='hd'/>
+```
+
+No `secure-boot` line and no `.ms.fd` files. The two `<boot>` lines only appear if the VM was created with `--boot cdrom,hd` as above.
+
+Both NICs carry the planned MACs:
+
+```bash
+sudo virsh domiflist bcm-head
+```
+
+**Expected output**
+
+```text
+ Interface   Type      Source         Model    MAC
+------------------------------------------------------------------
+ vnet0       network   default        virtio   52:54:00:bc:00:01
+ vnet1       network   bcm-internal   virtio   52:54:00:bc:01:01
+```
+
+vCPUs are pinned to the BCM cores, and the console port is known:
+
+```bash
+sudo virsh vcpupin bcm-head
+sudo virsh vncdisplay bcm-head
+```
+
+**Expected output**
+
+```text
+ VCPU   CPU Affinity
+----------------------
+ 0      4,10-14
+ 1      4,10-14
+ 2      4,10-14
+ 3      4,10-14
+
+127.0.0.1:0
+```
+
+On screen, the VM should show the BCM boot menu, with **Start Base Command Manager Graphical Installer** first.
 
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
@@ -924,6 +1311,27 @@ sudo virsh change-media bcm-head sdb --eject --config
 
 With the ISO ejected, the CD-first boot order falls through to the disk, so the head node boots its installed system from now on.
 
+### Verify this step
+
+Before accepting the network screens: the PCI bus check above shows `bus='0x01'` on `default`, and the installer shows `enp1s0` → externalnet → `192.168.122.10`, `enp2s0` → internalnet → `10.141.255.254`.
+
+After the install has rebooted and you've ejected the ISO, the CD-ROM is empty:
+
+```bash
+sudo virsh domblklist bcm-head --details
+```
+
+**Expected output**
+
+```text
+ Type   Device   Target   Source
+-------------------------------------------------------------------
+ file   disk     sda      /var/lib/libvirt/images/bcm-head.qcow2
+ file   cdrom    sdb      -
+```
+
+The console shows an Ubuntu login prompt for `bcm-head` instead of the installer.
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
@@ -1010,6 +1418,59 @@ cmsh -c "softwareimage list"
 ss -ulpn | grep -E ':67|:69'
 ```
 
+### Verify the head node's network interfaces
+
+Confirm the installer applied the mapping from step 7: `enp1s0` on externalnet, `enp2s0` on internalnet. Run these on bcm-head (over SSH, or on the serial console if SSH doesn't answer):
+
+```bash
+ip -br addr show enp1s0; ip -br addr show enp2s0
+```
+
+**Expected output**
+
+```text
+enp1s0   UP   192.168.122.10/24 fe80::5054:ff:febc:1/64
+enp2s0   UP   10.141.255.254/16 fe80::5054:ff:febc:101/64
+```
+
+The link-local IPv6 addresses are usually derived from the MACs (`…:bc:00:01` and `…:bc:01:01`), which is a quick second confirmation that each name is on the right NIC.
+
+```bash
+ip -br link | grep 52:54:00:bc
+ip route | grep default
+cmsh -c "device use master; interfaces; list"
+```
+
+**Expected output** (cmsh columns vary slightly by release)
+
+```text
+enp1s0   UP   52:54:00:bc:00:01 <BROADCAST,MULTICAST,UP,LOWER_UP>
+enp2s0   UP   52:54:00:bc:01:01 <BROADCAST,MULTICAST,UP,LOWER_UP>
+default via 192.168.122.1 dev enp1s0 proto static
+
+Type     Network device name   IP               Network
+-------- --------------------- ---------------- ------------
+physical enp1s0                192.168.122.10   externalnet
+physical enp2s0 [prov]         10.141.255.254   internalnet
+```
+
+From the Spark, the two VM-side NICs also appear as `vnet` devices. Match them to their networks with:
+
+```bash
+sudo virsh domiflist bcm-head
+```
+
+**Expected output**
+
+```text
+ Interface   Type      Source         Model    MAC
+------------------------------------------------------------------
+ vnet0       network   default        virtio   52:54:00:bc:00:01
+ vnet1       network   bcm-internal   virtio   52:54:00:bc:01:01
+```
+
+If the default route points at `enp2s0`, or `enp1s0` holds 10.141.255.254, the mapping is swapped: see *Diagnose this step* in step 7.
+
 ### Reach Base View (the web GUI)
 
 ```bash
@@ -1021,6 +1482,67 @@ ssh -N bcm-base-view
 # → https://192.168.0.50:8081/base-view
 # Log in as root. Accept the self-signed certificate warning.
 ```
+
+### Verify this step
+
+The interface checks above, plus:
+
+The licence is active:
+
+```bash
+cmsh -c "main licenseinfo"
+```
+
+**Expected output**
+
+```text
+License version        7.0
+Licensee               /C=US/ST=.../O=.../CN=sparklab
+Start time             ...
+End time               ...
+Licensed nodes         ...
+```
+
+Exact fields vary; what matters is that it returns details rather than an error.
+
+BCM knows both networks and the head node is up:
+
+```bash
+cmsh -c "network list"
+cmsh -c "device list"
+```
+
+**Expected output**
+
+```text
+Name (key)        Type       Netmask bits   Base address     Domain name
+----------------- ---------- -------------- ---------------- --------------------
+externalnet       External   24             192.168.122.0    sparklab.home.arpa
+internalnet       Internal   16             10.141.0.0       eth.cluster
+
+Type         Hostname (key)  MAC                 Category   IP               Network       Status
+------------ --------------- ------------------- ---------- ---------------- ------------- --------
+HeadNode     bcm-head        52:54:00:BC:01:01                  10.141.255.254   internalnet   [   UP   ]
+PhysicalNode node001         00:00:00:00:00:00   default    10.141.0.1       internalnet   [  DOWN  ]
+PhysicalNode node002         00:00:00:00:00:00   default    10.141.0.2       internalnet   [  DOWN  ]
+```
+
+Nodes show DOWN with an empty MAC until step 9.
+
+BCM's DHCP and TFTP listen only on the internal network:
+
+```bash
+ss -ulpn | grep -E ':67 |:69 '
+```
+
+**Expected output**
+
+```text
+UNCONN 0 0   0.0.0.0%enp2s0:67   0.0.0.0:*  users:(("dhcpd",...))
+UNCONN 0 0          0.0.0.0:69   0.0.0.0:*  users:(("in.tftpd",...))
+```
+
+The DHCP line should name `enp2s0`. If it names `enp1s0`, the interfaces are swapped.
 
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
@@ -1127,6 +1649,40 @@ sinfo
 srun -N2 hostname
 ```
 
+### Verify this step
+
+Both nodes are provisioned and up:
+
+```bash
+cmsh -c "device status"
+```
+
+**Expected output**
+
+```text
+bcm-head ................. [   UP   ]
+node001 .................. [   UP   ]
+node002 .................. [   UP   ]
+```
+
+They answer by name and run jobs:
+
+```bash
+ssh node001 hostname
+sinfo
+srun -N2 hostname
+```
+
+**Expected output**
+
+```text
+node001
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+defq*        up   infinite      2   idle node[001-002]
+node001
+node002
+```
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
@@ -1226,6 +1782,21 @@ cmsh -c "device power reset -n node002"
 
 Check the argument and status conventions against the "custom power management" section of the BCM Administrator Manual for your release; if they differ, only the `case` block needs to change.
 
+### Verify this step
+
+BCM reads each node's power state through the script:
+
+```bash
+cmsh -c "device power status -n node001..node002"
+```
+
+**Expected output**
+
+```text
+custom      node001 ............. [   ON   ]
+custom      node002 ............. [   ON   ]
+```
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
@@ -1296,6 +1867,36 @@ docker stats --no-stream
 > **If you need the whole machine.**
 >
 > Stop the lab (`virsh shutdown` the nodes, then the head), raise the framework cap, and run the job. Start the lab again when you're done; BCM resumes where it left off.
+
+### Verify this step
+
+Containers see the GPU and run on the performance cores:
+
+```bash
+docker exec ollama nvidia-smi --query-gpu=name --format=csv,noheader
+docker inspect --format '{{.HostConfig.CpusetCpus}}' ollama
+```
+
+**Expected output**
+
+```text
+NVIDIA GB10
+5-9,15-19
+```
+
+Memory is shared the way you planned:
+
+```bash
+free -g
+systemd-cgtop -1 -n1 --order=memory | head -6
+```
+
+**Expected output**
+
+```text
+Mem:   total ~119, used includes ~34 GB for the lab VMs plus the loaded model
+machine.slice appears with close to its locked VM memory
+```
 
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
