@@ -838,7 +838,7 @@ sudo virsh undefine bcm-head --nvram --remove-all-storage</code></pre>
 <section id="s7">
 <h2 class="bcm"><span class="n">7</span>Run the BCM installer</h2>
 <p class="touches">Touches: inside bcm-head only.</p>
-<p>At the ISO boot menu choose <strong>Start Base Command Manager Graphical Installer</strong>. If the VM lands at a <code>Shell&gt;</code> prompt instead, start the boot loader by hand with <code>fs0:</code> and then <code>\EFI\BOOT\bootaa64.efi</code>. Screen order varies slightly between releases; these are the values that matter.</p>
+<p>At the ISO boot menu choose <strong>Start Base Command Manager Graphical Installer</strong>. If the VM lands at a <code>Shell&gt;</code> prompt instead, start the boot loader by hand with <code>fs0:</code> and then <code>\EFI\BOOT\bootaa64.efi</code>. Screen order varies slightly between releases; these are the values that matter, as seen in BCM 11.34.0 on Ubuntu 24.04.</p>
 <div class="tbl"><table>
 <thead><tr><th>Installer screen</th><th>Value for this lab</th></tr></thead>
 <tbody>
@@ -851,12 +851,24 @@ sudo virsh undefine bcm-head --nvram --remove-all-storage</code></pre>
 <tr><td>Head node</td><td>Hostname <code>bcm-head</code>; set the root password; hardware vendor Other/Generic.</td></tr>
 <tr><td>Compute nodes</td><td>2 nodes, base name <code>node</code>, 3 digits (node001, node002); vendor Other/Generic.</td></tr>
 <tr><td>BMC configuration</td><td>No BMC / IPMI. VMs don't have one; see step 10 for power control.</td></tr>
-<tr><td>externalnet</td><td>Static <code>192.168.122.10/24</code>, gateway <code>192.168.122.1</code>. Don't use a 192.168.0.x address: the head node isn't on your home LAN.</td></tr>
-<tr><td>internalnet</td><td>Default <code>10.141.0.0/16</code>; head node <code>10.141.255.254</code>.</td></tr>
-<tr><td>Interface mapping</td><td>MAC <code>52:54:00:bc:00:01</code> → externalnet; MAC <code>52:54:00:bc:01:01</code> → internalnet. Names are typically <code>enp1s0</code>/<code>enp2s0</code> but match on MAC, not name.</td></tr>
-<tr><td>Disk layout</td><td>Default single-disk layout on <code>/dev/sda</code>.</td></tr>
-<tr><td>Additional software</td><td>Defaults. Skip CUDA and GPU packages; nothing in this cluster has a GPU.</td></tr>
+<tr><td>Networks: externalnet</td><td>DHCP <strong>off</strong>; base <code>192.168.122.0</code>, netmask <code>/24</code>, gateway <code>192.168.122.1</code>, MTU 1500. Change <strong>Domain name</strong> from the prefilled <code>nvidia.com</code> to a private name such as <code>sparklab.home.arpa</code>: BCM answers DNS for this domain itself, so a real domain there can break lookups of NVIDIA's servers during licensing and updates. Avoid <code>.local</code> (used by macOS Bonjour).</td></tr>
+<tr><td>Networks: internalnet</td><td>Keep the defaults: base <code>10.141.0.0</code>, netmask <code>/16</code>, dynamic range <code>10.141.160.0</code>–<code>10.141.167.255</code> (temporary addresses for nodes while they PXE-boot, before they are identified), domain <code>eth.cluster</code>, gateway <strong>blank</strong> (the head node becomes the nodes' gateway), MTU 1500.</td></tr>
+<tr><td>Head node network interfaces</td><td><strong>Check this screen — the installer's guess can be swapped.</strong> It assigns networks by name order, not by what each NIC is plugged into. On this VM the correct mapping is:<br><code>enp1s0</code> → <strong>externalnet</strong> → <code>192.168.122.10</code><br><code>enp2s0</code> → <strong>internalnet</strong> → <code>10.141.255.254</code><br>Confirm with the PCI bus check below; change the Network dropdowns and IPs if the screen shows it the other way round.</td></tr>
+<tr><td>Disk layout</td><td>The installer warns that the disk is smaller than the recommended 500 GB and defaults to <strong>One big partition</strong> for both the head node and compute nodes. Keep it: that's fine for a lab. Use the edit (pencil) button on the compute nodes layout to confirm it targets <code>/dev/sda</code>.</td></tr>
+<tr><td>Additional software</td><td>Leave <strong>CUDA unchecked</strong>. Nothing in this cluster has a GPU, and CUDA would add several GB to the head node and every software image. It can be added later with <code>apt</code> if you want to practise with it.</td></tr>
 </tbody></table></div>
+<h3>Check which interface is which</h3>
+<p>Before accepting the head node network interfaces screen, look up each NIC's PCI bus on the Spark. Linux names a NIC on bus <code>0x01</code> <code>enp1s0</code>, on bus <code>0x02</code> <code>enp2s0</code>, and so on.</p>
+<pre><code>sudo virsh dumpxml bcm-head | grep -A4 "&lt;interface" | grep -E "mac address|source network|bus="</code></pre>
+<p>Expected output on this VM:</p>
+<pre><code>&lt;mac address='52:54:00:bc:00:01'/&gt;
+&lt;source network='default' … bridge='virbr0'/&gt;
+&lt;address type='pci' … bus='0x01' …/&gt;        <span class="c">← enp1s0 = externalnet</span>
+&lt;mac address='52:54:00:bc:01:01'/&gt;
+&lt;source network='bcm-internal' … bridge='virbr-bcmi'/&gt;
+&lt;address type='pci' … bus='0x02' …/&gt;        <span class="c">← enp2s0 = internalnet</span></code></pre>
+<p>A swapped mapping puts BCM's DHCP and PXE service on the NAT network: the compute nodes never get addresses, and the head node has no internet access for licensing.</p>
+
 <p>Review the summary, start the install, and let it reboot. Installation on the efficiency cores takes roughly 20-40 minutes.</p>
 <h3>Detach the ISO after the first boot</h3>
 <pre><code>sudo virsh domblklist bcm-head --details   <span class="c"># find the CD-ROM target, e.g. sdb</span>
@@ -871,8 +883,22 @@ sudo virsh change-media bcm-head sdb --eject --config</code></pre>
 sudo virsh domblklist bcm-head --details</code></pre>
 </div>
 <div class="dx">
-<p class="sym">Interface names confuse you in the network screens</p>
-<p>Match by MAC, never by name: <code>…:bc:00:01</code> is external, <code>…:bc:01:01</code> is internal. A swapped mapping puts BCM's DHCP server on the NAT network and leaves the nodes with nothing.</p>
+<p class="sym">The head node network interfaces screen shows enp1s0 = internalnet</p>
+<p>That's the installer's guess, and on this VM it's backwards. Run the PCI bus check above; <code>bus='0x01'</code> on the <code>default</code> network means <code>enp1s0</code> is external. Swap the Network dropdowns and set <code>enp1s0</code> to <code>192.168.122.10</code>, <code>enp2s0</code> to <code>10.141.255.254</code>.</p>
+</div>
+<div class="dx">
+<p class="sym">You already installed with the mapping swapped</p>
+<p>Nodes won't get DHCP and <code>request-license</code> can't reach the internet. Reinstalling is quickest in a lab. To fix it in place instead, swap the two interfaces' networks and IPs on the head node in cmsh, then reboot it:</p>
+<pre><code>cmsh
+device use master
+interfaces
+list                       <span class="c"># shows enp1s0 / enp2s0 with their networks and IPs</span></code></pre>
+<p>Use <code>use enp1s0</code>, <code>set network externalnet</code>, <code>set ip 192.168.122.10</code>, then the same for <code>enp2s0</code> with internalnet and 10.141.255.254, and <code>commit</code>. Work from the VNC or serial console, since SSH over the wrong interface will drop.</p>
+</div>
+<div class="dx">
+<p class="sym">externalnet's domain was left as nvidia.com</p>
+<p>Lookups of NVIDIA hosts from the cluster may be answered locally and fail. Change it after installation:</p>
+<pre><code>cmsh -c "network use externalnet; set domainname sparklab.home.arpa; commit"</code></pre>
 </div>
 <div class="dx">
 <p class="sym">After the install reboots, the installer starts again</p>
@@ -1322,6 +1348,7 @@ df -h /var/lib                             <span class="c"># disk space recovere
 <tr><td>VNC viewer: “Connection refused” on localhost:5901</td><td>The SSH tunnel closed. Start it again; check <code>virsh vncdisplay bcm-head</code> matches the tunnel's port.</td></tr>
 <tr><td>ISO mount: “already mounted”</td><td>A stale mount, possibly of an older file. <code>sudo umount /mnt</code> until “not mounted”, then remount.</td></tr>
 <tr><td><code>virt-host-validate</code>: WARN on cgroup 'devices' controller</td><td>Harmless on cgroup v2. Make sure <code>cpuset</code> and <code>memory</code> are in <code>/sys/fs/cgroup/cgroup.controllers</code>.</td></tr>
+<tr><td>Installer maps enp1s0 to internalnet</td><td>The guess is swapped on this VM. Check PCI buses with <code>virsh dumpxml bcm-head</code>: bus <code>0x01</code> (<code>default</code> network) is <code>enp1s0</code> = externalnet (step 7).</td></tr>
 <tr><td>Things broke after a DGX OS update</td><td>A new kernel may reset kvm or cgroup behaviour. Recheck <code>/dev/kvm</code>, <code>systemctl show machine.slice</code> and <code>virt-host-validate</code>.</td></tr>
 </tbody></table></div>
 </section>
