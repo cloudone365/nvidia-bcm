@@ -1605,25 +1605,50 @@ quit
 
 Nodes attach only to `bcm-internal` and boot from the network first. The disk is second in the boot order, so a reinstall is always one reboot away. They use the same non-Secure-Boot firmware as the head node; with Secure Boot on, the firmware would refuse BCM's network boot loader in exactly the same silent way.
 
+Unlike the head node, a node has no ISO to install from: BCM installs it over the network. `virt-install` still insists on an install method, so each node's empty disk is created first with `qemu-img` and the VM is created with `--import` (“boot what's there”). The `network,hd` order in `--boot` then makes it PXE-boot from the head node.
+
 ```bash
 for i in 1 2; do
   n=$(printf "%03d" $i)
+  sudo qemu-img create -f qcow2 /var/lib/libvirt/images/bcm-node$n.qcow2 60G
   sudo virt-install \
     --name bcm-node$n \
     --osinfo ubuntu24.04 \
     --arch aarch64 --machine virt \
-    --boot loader=/usr/share/AAVMF/AAVMF_CODE.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/AAVMF/AAVMF_VARS.fd \
+    --import \
+    --boot network,hd,loader=/usr/share/AAVMF/AAVMF_CODE.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/AAVMF/AAVMF_VARS.fd \
     --cpu host-passthrough \
     --vcpus 2,cpuset=4,10-14 \
     --memory 4096 \
     --memorybacking locked=on \
     --controller type=scsi,model=virtio-scsi \
-    --disk path=/var/lib/libvirt/images/bcm-node$n.qcow2,size=60,format=qcow2,bus=scsi,cache=none,discard=unmap,boot.order=2 \
-    --network network=bcm-internal,model=virtio,mac=52:54:00:bc:01:1$i,boot.order=1 \
+    --disk path=/var/lib/libvirt/images/bcm-node$n.qcow2,format=qcow2,bus=scsi,cache=none,discard=unmap \
+    --network network=bcm-internal,model=virtio,mac=52:54:00:bc:01:1$i \
     --graphics vnc,listen=127.0.0.1 --video virtio \
     --console pty,target_type=serial \
     --noautoconsole
 done
+```
+
+Three details matter here:
+
+- **`qemu-img create` + `--import`**: the install method. Without it, `virt-install` stops with “An install method must be specified”.
+- **`--boot network,hd,…`**: network first, disk second, set on the VM rather than per device. Don't add `boot.order=` to `--disk` or `--network` as well; libvirt refuses to combine the two styles.
+- **No `size=` on `--disk`**: the disk already exists.
+
+Check that each node got the right firmware, boot order and MAC:
+
+```bash
+sudo virsh dumpxml bcm-node001 | grep -iE "loader|<boot|mac address"
+```
+
+**Expected output**
+
+```text
+    <loader readonly='yes' type='pflash'>/usr/share/AAVMF/AAVMF_CODE.fd</loader>
+    <boot dev='network'/>
+    <boot dev='hd'/>
+      <mac address='52:54:00:bc:01:11'/>
 ```
 
 ### Watch them provision
@@ -1685,6 +1710,14 @@ node002
 
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
+
+**`virt-install`: “An install method must be specified (--location URL, --cdrom CD/ISO, --pxe, --import, --boot hd|cdrom|...)”**
+
+The command has no install method. Nodes have no ISO, and per-device `boot.order=` settings, or a `--boot` with only firmware options, don't count. Use the command above: create the disk with `qemu-img`, then `--import` with `--boot network,hd,…`. Nothing is defined when this error appears, so there's nothing to clean up; if a disk file was already created, `qemu-img` reports it exists and `virt-install` reuses it.
+
+**A node boots into the UEFI shell or “No bootable device” instead of PXE**
+
+The boot order puts the disk first, or the NIC isn't on `bcm-internal`. Check `sudo virsh dumpxml bcm-node001 | grep -E "<boot|source network"`: you want `network` before `hd`, and `bcm-internal`.
 
 **A node's screen shows PXE attempts but no DHCP offer**
 
@@ -2146,6 +2179,7 @@ Download it again on the Spark with `wget` (step 5) — the portal lets you re-d
 | ISO mount: “already mounted” | A stale mount, possibly of an older file. `sudo umount /mnt` until “not mounted”, then remount. |
 | `virt-host-validate`: WARN on cgroup 'devices' controller | Harmless on cgroup v2. Make sure `cpuset` and `memory` are in `/sys/fs/cgroup/cgroup.controllers`. |
 | Installer maps enp1s0 to internalnet | The guess is swapped on this VM. Check PCI buses with `virsh dumpxml bcm-head`: bus `0x01` (`default` network) is `enp1s0` = externalnet (step 7). |
+| `virt-install` for nodes: “An install method must be specified” | Create the node disk with `qemu-img create` and add `--import` with `--boot network,hd,…` (step 9). |
 | Things broke after a DGX OS update | A new kernel may reset kvm or cgroup behaviour. Recheck `/dev/kvm`, `systemctl show machine.slice` and `virt-host-validate`. |
 
 <a id="caveats"></a>
