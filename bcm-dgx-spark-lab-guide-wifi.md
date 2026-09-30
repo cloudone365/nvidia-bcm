@@ -856,7 +856,7 @@ You want `BOOTAA64.EFI` or `bootaa64.efi` described as `Aarch64`. `bootx64.efi` 
 > [!NOTE]
 > **Licensing.**
 >
-> You need a BCM product key both to download and to activate the cluster in step 8. NVIDIA has offered no-cost BCM licensing in the past; check the current terms on the download portal or with your NVIDIA contact.
+> You need a BCM product key both to download and to activate the cluster in step 8. The **free licence may cover only one node, and the head node counts as that node**: the licence used to build this lab showed `Licensed nodes 1 / 1` before any compute node existed. If you want the two compute nodes in step 9 to be properly licensed, ask for a licence covering at least 3 nodes (head node + 2) when you request your key, from the BCM customer portal or your NVIDIA contact. See [step 8](#s8) for how to read the licence.
 
 ### Verify this step
 
@@ -1404,6 +1404,51 @@ request-license
 cmsh -c "main licenseinfo"
 ```
 
+**Expected output** with the free licence (identifying details replaced):
+
+```text
+License Information
+------------------------------------ ---------------------------------------------------------
+Licensee                             /C=US/ST=<state>/L=<city>/O=<organisation>/OU=IT/CN=sparklab
+Serial number                        <serial>
+Start time                           <issue date>
+End time                             <issue date + 1 year>
+Version                              10 and above
+Edition                              Advanced
+Type                                 Free
+Licensed nodes                       1 / 1
+Licensed accelerators                0 / 1
+Allow edge sites                     Yes
+MAC address / Cloud ID               52:54:00:BC:01:01
+```
+
+### Read the licence: node limit and MAC binding
+
+| Field | What it tells you |
+|---|---|
+| Type / Edition | `Free` / `Advanced`: the no-cost licence. It comes without NVIDIA support. |
+| Start / End time | Valid for about a year. Renew it with a new key and `request-license` before it ends. |
+| Licensed nodes | Shown as *in use / allowed*. `1 / 1` right after installation, before any compute node exists, means **the head node itself uses the only licensed node**. There is no room left for compute nodes. |
+| Licensed accelerators | GPUs. `0` in use: nothing in this cluster has a GPU. |
+| MAC address | The licence is bound to the head node's **internal** NIC, `52:54:00:BC:01:01`. If you rebuild the head node, keep that MAC in `virt-install` and the same licence stays valid; a different MAC needs a new licence. This is one reason the lab uses fixed MAC addresses. |
+
+Check the node count on its own at any time:
+
+```bash
+cmsh -c "main licenseinfo" | grep -iE "nodes|message"
+```
+
+**Expected output** before step 9
+
+```text
+Licensed nodes                       1 / 1
+```
+
+> [!WARNING]
+> **Plan for the node limit before step 9.**
+>
+> With a 1-node licence, both compute nodes in step 9 put the cluster over its licensed count. In this lab BCM still provisioned them and brought them `UP`, but reported the overage (see step 9). Decide now whether to request a larger licence, run over the limit temporarily, or build only as many nodes as you are licensed for.
+
 ### Update and sanity-check
 
 ```bash
@@ -1496,14 +1541,22 @@ cmsh -c "main licenseinfo"
 **Expected output**
 
 ```text
-License version        7.0
-Licensee               /C=US/ST=.../O=.../CN=sparklab
-Start time             ...
-End time               ...
-Licensed nodes         ...
+License Information
+------------------------------------ ---------------------------------------------------------
+Licensee                             /C=US/ST=<state>/L=<city>/O=<organisation>/OU=IT/CN=sparklab
+Serial number                        <serial>
+Start time                           <issue date>
+End time                             <issue date + 1 year>
+Version                              10 and above
+Edition                              Advanced
+Type                                 Free
+Licensed nodes                       1 / 1
+Licensed accelerators                0 / 1
+Allow edge sites                     Yes
+MAC address / Cloud ID               52:54:00:BC:01:01
 ```
 
-Exact fields vary; what matters is that it returns details rather than an error.
+Identifying fields differ; check `Type`, the dates and `Licensed nodes`.
 
 BCM knows both networks and the head node is up:
 
@@ -1547,6 +1600,14 @@ The DHCP line should name `enp2s0`. If it names `enp1s0`, the interfaces are swa
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
 
+**`Licensed nodes` shows `1 / 1` right after installation**
+
+The head node counts as a licensed node, and the free licence allows one. Compute nodes will exceed it. See *Read the licence* above and plan before step 9.
+
+**The licence stops being valid after rebuilding the head node**
+
+The licence is bound to the internal NIC's MAC. Check `sudo virsh domiflist bcm-head` on the Spark: the `bcm-internal` line must show `52:54:00:bc:01:01`. Set it back with `virt-install … --network network=bcm-internal,…,mac=52:54:00:bc:01:01`, or request a new licence for the new MAC.
+
 **`request-license` can't connect**
 
 ```bash
@@ -1583,6 +1644,22 @@ ssh-keygen -R bcm-head
 ## 🟩 9. Provision compute node VMs
 
 > *Touches: new VMs in machine.slice; BCM device records.*
+
+> [!WARNING]
+> **Check the licence before adding nodes.**
+>
+> Every compute node counts against `Licensed nodes`. The free licence used for this lab allowed **1** node, already taken by the head node. After both compute nodes were provisioned, BCM showed:
+>
+> ```text
+> Licensed nodes                       3 / 1
+> Message:                             You've reached the limit of pre paid nodes
+> ```
+>
+> BCM did **not** block the nodes: they provisioned, came `UP` and answered over SSH. Whether over-limit nodes keep working after reboots or reprovisioning isn't documented, and running above the licensed count isn't within the licence terms. Your options:
+>
+> - **Get a larger licence** (recommended): request one covering 3 nodes from the BCM customer portal or NVIDIA, then run `request-license` on the head node. The licence is bound to the head node's internal MAC, which doesn't change, so nothing needs rebuilding.
+> - **Stay within the licence**: build no compute nodes and practise on the head node alone (images, categories, `cmsh`, Base View, monitoring).
+> - **Run over the limit temporarily** while a licence request is pending, accepting the warning. To drop back under it later, shut a node down and remove it: `sudo virsh shutdown bcm-node002` on the Spark, then `cmsh -c "device remove node002; commit"` on the head node.
 
 ### Tell BCM each node's MAC address
 
@@ -1708,8 +1785,34 @@ node001
 node002
 ```
 
+Check where the cluster stands against the licence:
+
+```bash
+cmsh -c "main licenseinfo" | grep -iE "nodes|message"
+```
+
+**Expected output** with a licence covering 3 nodes
+
+```text
+Licensed nodes                       3 / 3
+```
+
+With the 1-node free licence you'll see `3 / 1` and the “limit of pre paid nodes” message instead.
+
 <details>
 <summary><b>🩺 Diagnose this step</b></summary>
+
+**`licenseinfo` shows “You've reached the limit of pre paid nodes” and a count above the limit (e.g. `3 / 1`)**
+
+More nodes are registered than the licence allows. In this lab the nodes still worked. Get a licence for the number of nodes you run, or remove nodes to fit (see the note at the start of this step).
+
+**A node won't provision or stays DOWN, and the CMDaemon log mentions the licence**
+
+```bash
+grep -i licen /var/log/cmdaemon | tail -20
+```
+
+BCM is enforcing the node limit for that node. Install a larger licence with `request-license`, then `cmsh -c "device use node002; reboot"`.
 
 **`virt-install`: “An install method must be specified (--location URL, --cdrom CD/ISO, --pxe, --import, --boot hd|cdrom|...)”**
 
@@ -2180,6 +2283,7 @@ Download it again on the Spark with `wget` (step 5) — the portal lets you re-d
 | `virt-host-validate`: WARN on cgroup 'devices' controller | Harmless on cgroup v2. Make sure `cpuset` and `memory` are in `/sys/fs/cgroup/cgroup.controllers`. |
 | Installer maps enp1s0 to internalnet | The guess is swapped on this VM. Check PCI buses with `virsh dumpxml bcm-head`: bus `0x01` (`default` network) is `enp1s0` = externalnet (step 7). |
 | `virt-install` for nodes: “An install method must be specified” | Create the node disk with `qemu-img create` and add `--import` with `--boot network,hd,…` (step 9). |
+| `Licensed nodes 1 / 1` before any compute node, or “limit of pre paid nodes” | The free licence covers one node and the head node uses it. Request a licence for 3 nodes and install it with `request-license` (steps 8 and 9). |
 | Things broke after a DGX OS update | A new kernel may reset kvm or cgroup behaviour. Recheck `/dev/kvm`, `systemctl show machine.slice` and `virt-host-validate`. |
 
 <a id="caveats"></a>
@@ -2193,3 +2297,4 @@ Download it again on the Spark with `wget` (step 5) — the portal lets you re-d
 - Arm-only by default. The VMs match the Spark's architecture; x86 nodes would need full emulation and would be very slow.
 - Unsupported host configuration. Virtualization on DGX Spark works but isn't a supported NVIDIA use, and future DGX OS updates could change that.
 - Shared memory pool. The cgroup cap and locked memory protect the VMs, but the GPU side still has to be configured to leave room; nothing enforces that from the hardware.
+- Licence node limit. The free BCM licence may cover a single node, which the head node already uses. Two compute nodes need a larger licence to be within its terms; the licence is bound to the head node's internal MAC, `52:54:00:BC:01:01`.
